@@ -1,0 +1,70 @@
+CZLSTG   title 'Get storage'
+*      *--------------------------------------------------------------*
+*      * Generalised storage aquire/free                              *
+*      *                                                              *
+*      * (c) Caddis Systems Ltd 2001, All rights reserved             *
+*      * v1.000                                                       *
+*      *                                                              *
+*      * r0    Storage length                                         *
+*      * r1    Storage address                                        *
+*      *                                                              *
+*      *--------------------------------------------------------------*
+czlstg   rsect ,
+czlstg   amode 31
+czlstg   rmode any
+
+         using czlstg,r15          * Temporary Base register
+         stm   r14,r12,12(r13)     * Save callers registers
+         b     main000             * Skip eye-catchers, etc.
+         cnop  0,4
+         eyec  ,                   * Eye-catchers
+         cnop  0,4
+         drop  r15                 * Drop temporary base
+
+*      *--------------------------------------------------------------*
+*      * Global mapping, etc...                                       *
+*      *--------------------------------------------------------------*
+main000  ds    0h
+         lae   r12,0(r15,0)        * Transfer base address
+         using czlstg,r12          * Make code addressable
+
+*      *--------------------------------------------------------------*
+*      * Obtain storage                                               *
+*      *--------------------------------------------------------------*
+         storage OBTAIN,                                               +
+               loc=ANY,                                                +
+               length=(r0),                                            +
+               addr=(r1),                                              +
+               cond=YES,                                               +
+               checkzero=YES
+
+         c     r15,=a(x'14')       * Storage cleared to zeros?
+         be    main010             * Yes, return Rc = 0
+
+         c     r15,=a(0)           * Rc = 0, storage, but not cleared?
+         bne   main090             * No, just return Rc
+
+*      *--------------------------------------------------------------*
+*      * Clear storage to x'00's                                      *
+*      *--------------------------------------------------------------*
+         lr    r2,r1               * Copy address
+         lr    r3,r0               * Copy length
+         lr    r14,r2              * Copy address
+         xr    r15,r15             * Set to clear
+         mvcl  r2,r14              * Clear storage to x'00's
+
+main010  ds    0h
+         la    r15,0(,0)           * Set to zero
+
+main090  ds    0h
+         mace  (r15,r1)            * Set storage address for caller
+         lm    r14,r12,12(r13)     * Restore callers registers
+         ltr   r15,r15             * Set rc
+         br    r14                 * And return to caller
+
+         drop  r12                 * Drop base
+         cnop  0,4                 * Align
+         ltorg ,                   * Literals
+         cnop  0,4                 * Align
+         regequ ,                  * Register equates
+         end   ,                   * C'est la!

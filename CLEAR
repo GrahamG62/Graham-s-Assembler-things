@@ -1,0 +1,4 @@
+         MACRO
+&lab     CLEAR &flag
+&lab     ni    &flag,255-l'&flag
+         MEND

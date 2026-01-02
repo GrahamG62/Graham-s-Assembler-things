@@ -1,0 +1,12 @@
+         MACRO
+&label   ZCALL &zip
+
+         aif   ('&zip'(1,1) eq '(').cal010
+         l     r15,&zip            * Get routine address
+         basr  r14,r15             * Call routine
+         mexit
+
+.cal010  anop
+         lr    r15,&zip(1)         * Get routine address
+         basr  r14,r15             * Call routine
+         MEND

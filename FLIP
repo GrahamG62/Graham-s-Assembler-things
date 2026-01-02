@@ -1,0 +1,4 @@
+         MACRO
+&lab     FLIP  &flag
+&lab     xi    &flag,l'&flag
+         MEND

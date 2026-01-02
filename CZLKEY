@@ -1,0 +1,66 @@
+czlkey   rsect ,
+czlkey   amode 31
+czlkey   rmode any
+
+*      *--------------------------------------------------------------*
+*      * Keyword table                                                *
+*      *--------------------------------------------------------------*
+*        keyw  1,'LIST'
+*          keyw  2,'FILE'
+*            keyw  3
+*              keyop 'OPEN'
+*              keyop 'ALL'
+*          keyw  2,'NAMES'
+*            keyw  3
+*              keyop 'ALL'
+*              keyop len=(2,8),type=a
+*          keyw  2,'ACTIVE'
+*            keyw  3
+*              keyop 'TASKS'
+*              keyop 'USERS'
+*
+*        keyw  1,'START'
+*          keyw  2,'FILE'
+*            keyw  3
+*              keyop 'OPEN'
+*              keyop 'ALL'
+*              keyop len=(2,8),type=a
+*          keyw  2,'NAMES'
+*            keyw  3
+*              keyop 'ALL'
+*              keyop len=(2,8),type=a
+*          keyw  2,'ACTIVE'
+*            keyw  3
+*              keyop 'TASKS'
+*              keyop 'USERS'
+*
+*        keyw  1,'STOP'
+*          keyw  2,'FILE'
+*            keyw  3
+*              keyop 'OPEN'
+*              keyop 'ALL'
+*          keyw  2,'NAMES'
+*            keyw  3
+*              keyop 'ALL'
+*              keyop len=(2,8),type=a
+*          keyw  2,'ACTIVE'
+*            keyw  3
+*              keyop 'TASKS'
+*              keyop 'USERS'
+
+ keyw  1,'OPEN'
+   keyw  2,'FILE'
+     keyw  3
+       keyop len=(1,8),type=a
+       keyw  4
+         keyop len=(1,8),type=a
+         keyw  5
+           keyop len=(1,2),type=a
+
+ keyw  1,'LIST'
+   keyw  2,mult=y
+     keyop len=(1,8),type=a
+
+  keyw end
+
+         end   ,

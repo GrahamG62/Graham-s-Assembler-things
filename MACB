@@ -1,0 +1,21 @@
+         MACRO
+         MACB  &len,&base,&wk
+.*     *--------------------------------------------------------------*
+.*     * #macb Initialise parameter list                              *
+.*     *--------------------------------------------------------------*
+&wkr     setc  '&wk'
+         aif   (t'&wk ne 'O').acb010
+&wkr     setc  '14'
+
+.acb010  anop
+         aif   (t'&len ne 'O').acb020
+         mnote 8,'macb - Missing parameter list length'
+         mexit
+
+.acb020  anop
+&wln     seta  &len+4
+         xc    0(&wln,&base),0(&base)
+         la    &wkr,4(,&base)
+         st    &wkr,0(,&base)
+         mvc   04+02(2,&base),=al2(&len)
+         MEND

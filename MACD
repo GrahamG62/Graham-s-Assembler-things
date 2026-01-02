@@ -1,0 +1,104 @@
+         MACRO
+         MACD  &sub,&pl,&wk
+.*     *--------------------------------------------------------------*
+.*     * #macd - Build parameter list for $msgr substitutions         *
+.*     *--------------------------------------------------------------*
+&obj     setc  '&sub(1)'
+&typ     setc  '&sub(2)'
+&len     setc  '&sub(3)'
+&jfy     setc  '&sub(4)'
+&plr     setc  '&pl'
+         aif   (t'&pl ne 'O').acd010
+&plr     setc  '1'
+
+.acd010  anop
+&wkr     setc  '&wk'
+         aif   (t'&wk ne 'O').acd020
+&wkr     setc  '14'
+
+.acd020  anop
+         aif   (t'&obj ne 'O').acd030
+         mnote 8,'macd  - Missing parameter'
+         mexit
+
+.acd030  anop
+&utyp    setc  (upper '&typ')
+         aif   ('&utyp' eq 'C').acd040,                                +
+               ('&utyp' eq 'R').acd050,                                +
+               ('&utyp' eq 'F').acd060,                                +
+               ('&utyp' eq 'H').acd070,                                +
+               ('&utyp' eq 'A').acd080,                                +
+               ('&utyp' eq 'X').acd090,                                +
+               ('&utyp' eq 'P').acd100
+         aif   (t'&utyp eq 'O').acd050
+         mnote 8,'macd - Unrecognised type &utyp'
+         mexit
+.acd040  anop
+         aif   ('&obj'(1,1) eq '(').acd042
+         macc  0,(s,&obj),4,1,14
+         macc  4,=cl1'C',1,1,14
+         ago   .acd110
+.acd042  anop
+         macc  0,&obj,4,1,14
+         macc  4,=cl1'C',1,1,14
+         ago   .acd110
+.acd050  anop
+         macc  0,(&obj),4,1,14
+         macc  4,=cl1'R',,1,14
+         mexit
+.acd060  anop
+         macc  0,(s,&obj),4,1,14
+         macc  4,=cl1'F',1,1,14
+         mexit
+.acd070  anop
+         macc  0,(s,&obj),4,1,14
+         macc  4,=cl1'H',1,1,14
+         mexit
+.acd080  anop
+         macc  0,&obj,4,1,14
+         macc  4,=cl1'A',1,1,14
+         mexit
+.acd090  anop
+         macc  0,(s,&obj),4,1,14
+         macc  4,=cl1'X',1,1,14
+         ago   .acd110
+         mexit
+.acd092  anop
+         macc  0,=al1(&len),1,1,14
+         mexit
+.acd100  anop
+         macc  0,(s,&obj),,1,14
+         macc  4,=cl1'P',1,1,14
+.acd110  anop
+         aif   (n'&len gt 1).acd120
+         aif   ('&len'(1,1) eq '(').acd130
+         aif   ('&len'(1,1) ne '=').acd140
+         macc  6,&len,1,1,14
+         ago   .acd150
+.acd120  anop
+         macc  6,&len,1,1,14
+         ago   .acd150
+.acd130  anop
+&lreg    setc  '&len'(2,k'&len-2)
+         stc   &lreg,6(,1)
+         ago   .acd150
+.acd140  anop
+         macc  6,=al1(&len),1,1,14
+.acd150  anop
+         aif   (t'&jfy eq 'O').acd190
+         aif   (n'&jfy gt 1).acd160
+         aif   ('&jfy'(1,1) eq '(').acd170
+         aif   ('&jfy'(1,1) ne '=').acd180
+         macc  7,&jfy,1,1,14
+         mexit
+.acd160  anop
+         macc  7,&jfy,1,1,14
+         mexit
+.acd170  anop
+&jreg    setc  '&jfy'(2,k'&jfy-2)
+         stc   &jreg,7(,1)
+         mexit
+.acd180  anop
+         macc  7,=al1(&jfy),1,1,14
+.acd190  anop
+         MEND

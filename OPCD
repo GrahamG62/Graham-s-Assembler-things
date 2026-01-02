@@ -1,0 +1,116 @@
+         MACRO
+&lab     OPCD  &mnem,&op,&type=,&cc=NO,&sec=
+.*     *--------------------------------------------------------------*
+.*     * #opcd Define opcode & mnemonic                               *
+.*     * V.1000                                                       *
+.*     *                                                              *
+.*     * The opcode table is laid out as follows:                     *
+.*     *                                                              *
+.*     * +00   Type                Instruction format                 *
+.*     *       al2(00)             Invalid operation                  *
+.*     *       al2(01)             E       UPT                        *
+.*     *       al2(02)             RR      LR                         *
+.*     *       al2(03)             RR#2    BCR                        *
+.*     *       al2(04)             RR#3    SVC                        *
+.*     *       al2(05)             RS#1    BXLE                       *
+.*     *       al2(06)             RS#2    SLL                        *
+.*     *       al2(07)             RS#3    ICM                        *
+.*     *       al2(08)             RX      LA                         *
+.*     *       al2(09)             RX#2    BC                         *
+.*     *       al2(10)             S       TS                         *
+.*     *       al2(11)             SI      MVI                        *
+.*     *       al2(12)             SS#1    MVCP                       *
+.*     *       al2(13)             SS#2    ZAP                        *
+.*     *       al2(14)             SS#3    MVC                        *
+.*     *       al2(15)             SSE     MVSK                       *
+.*     *       al2(16)             RRE     PT                         *
+.*     *       al2(17)             RI      AHI                        *
+.*     *       al2(-1)             2 byte opcode, with 2y table       *
+.*     *                                                              *
+.*     * +00   Type vector                                            *
+.*     * +02   Opcode                                                 *
+.*     * +04   Instruction length                                     *
+.*     * +06   Instruction mnemonic                                   *
+.*     *  or                                                          *
+.*     * +02   xl2'00'                                                *
+.*     * +04   a(secondary table)  if 2 byte opcode                   *
+.*     * +04   xl4'00'                                                *
+.*     *                                                              *
+.*     *--------------------------------------------------------------*
+&utyp    setc  (upper '&mnem')
+         aif   ('&utyp' eq 'DSECT').dsct000
+         lclb  &f1(8),&f2(8)       . Local flag arrays
+
+&fmts(1) setc  'E','RR','RR#2','RR#3','RS#1','RS#2','RS#3','RX','RX#2',+
+               'S','SI','SS#1','SS#2','SS#3','SSE','RRE','RI'
+&opln(1) seta  2,2,2,2,4,4,4,4,4,4,4,6,6,6,6,6
+         aif   (t'&mnem ne 'O').opcd010
+         aif   (t'&type ne 'O').opcd030
+&lab     dc    xl14'00'            . Undefined opcode
+         mexit
+
+.opcd010 anop
+         aif   (t'&op ne 'O').opcd020
+         mnote 8,'#opcd - Instruction opcode missing'
+         mexit
+
+.opcd020 anop
+         aif   (t'&type ne 'O').opcd030
+         mnote 8,'#opcd - Instruction type missing'
+         mexit
+
+.opcd030 anop
+         aif   ('&type' ne '*').opcd040
+         aif   (t'&sec  ne 'O').opcd080
+         mnote 8,'#opcd - Secondary table missing'
+         mexit
+
+.opcd040 anop
+&utyp    setc  (upper '&type')
+&tvect   seta  1
+
+.opcd050 anop
+         aif   ('&fmts(&tvect)' eq '&utyp').opcd060
+&tvect   seta  &tvect+1
+         aif   (&tvect le n'&fmts).opcd050
+         mnote 8,'#opcd - Type &type is invalid'
+         mexit
+
+.opcd060 anop
+&ucc     setc  (upper '&cc')
+         aif   ('&ucc' ne 'YES').opcd070
+&f1(1)   setb  1
+
+.opcd070 anop
+&olen    seta  &opln(&tvect)
+&pnem    setc  '&mnem'(2,k'&mnem-2)
+&flg1    setc  '&f1(1)&f1(2)&f1(3)&f1(4)&f1(5)&f1(6)&f1(7)&f1(8)'
+&lab     dc    al2(&tvect)
+         dc    xl2'&op'
+         dc    al2(&olen)
+         dc    bl1'&flg1'
+         dc    xl1'00'
+         dc    cl6'&pnem'
+         mexit
+
+.opcd080 anop
+&lab     dc    al2(-1)
+         dc    al2(0)
+         dc    al4(&sec)
+         dc    xl6'00'
+         mexit
+
+.dsct000 anop
+opcode   dsect ,
+opcvct   ds    xl2                 * Instruction type
+opcop    ds    xl2                 * Opcode
+opclen   ds    xl2                 * Instruction length
+opcflg1  ds    xl1                 * Flags #1
+opf1cc   equ   opcflg1,x'80'       *    Instruction sets condition code
+opcflg2  ds    xl1                 * Flags #2
+opcmnem  ds    cl6                 * Instruction mnemonic
+         org   opclen
+opcsec   ds    al4                 * Secondary table Address
+         org   ,
+opcelen  equ   *-opcode            * Table entry length
+         MEND

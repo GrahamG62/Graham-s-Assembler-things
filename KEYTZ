@@ -1,0 +1,589 @@
+KEYTZ    title 'Test keyword parser #2'
+         IHAASCB DSECT=YES,LIST=YES
+         IHAASSB LIST=YES
+         macro
+         eyec
+&name    setc  (upper '&sysect')   . Program name
+&sdate   setc  '&sysdatc'          . Date as yyyymmdd
+&ddate   setc  '&sdate'(7,2)       . dd
+&mdate   setc  '&sdate'(5,2)       . mm
+&ydate   setc  '&sdate'(1,4)       . yyyy
+         dc    c'&name'
+         dc    c' (c) &ydate All rights reserved, Caddis Systems Ltd. '
+         dc    c'&systime'
+         dc    c' '
+         dc    c'&ddate./&mdate./&ydate'
+         dc    c' '
+         mend
+
+         macro
+&label   sub
+         aif   (t'&label ne 'O').sub010
+         mnote 8,'Label missing from sub macro'
+         mexit
+.sub010  anop
+&label   ds    0h
+         bakr  r14,0               * Save registers on stack
+         lae   r12,0(r15,0)        * X'fer base address
+         using &label,r12          * Map subroutine
+         mend
+
+         macro
+&label   subr
+         aif   (t'&label eq 'O').subr010
+&label   ds    0h
+.subr010 anop
+         pr    ,                   * Unstack and return to caller
+         drop  r12                 * Drop Subroutine
+         cnop  0,4                 * Align
+         ltorg ,                   * Literals
+         cnop  0,4                 * Align
+         mend
+
+         macro
+&label   fcall &zip
+         l     r15,&zip            * Get routine address
+         balr  r14,r15             * Call routine
+         mend
+
+*      *--------------------------------------------------------------*
+*      * Another version of my keyword parser!                        *
+*      *                                                              *
+*      * (c) Caddis Systems Ltd 2001, All rights reserved             *
+*      *--------------------------------------------------------------*
+keytz    csect ,
+keytz    amode 31                  * Use ALL the storage available
+keytz    rmode 24                  * Got DCBs, languish in the depths!
+
+         using keytz,r15           * Temporary Base register
+         stm   r14,r12,12(r13)     * Save caller's registers
+
+         $stkr get,id=KYTZ
+{{
+mince    ds    f
+pots     ds    cl20
+veg      ds    al4
+chnra    ds    4al4
+}}
+
+         b     main                * Skip eye-catchers, etc.
+         cnop  0,4
+         eyec  ,                   * Eye-catchers
+         cnop  0,4
+         drop  r15                 * Drop temporary base
+
+*      *--------------------------------------------------------------*
+*      * Global mapping, etc...                                       *
+*      *--------------------------------------------------------------*
+main     ds    0h
+         lae   r12,0(r15,0)        * Transfer base address
+         using keytz,r12           * Make code addressable
+         using keytzdat,r11        * Make data addressable
+kw       using keyw,r10            * Address keyword entry
+ko       using keyop,r10           * Address keyop   entry
+
+*      *--------------------------------------------------------------*
+*      * Initialise stuff...                                          *
+*      *--------------------------------------------------------------*
+         l     r11,=v(keytzdat)    * Address data
+         l     r10,=v(keytest)     * Address keyword table
+
+         lr    r2,r13              * Copy caller's savearea address
+         st    r13,mysave+4        * Chain back to caller's savearea
+         la    r13,mysave          * And address our savearea
+         st    r13,8(,r2)          * Chain ours from callers
+
+         fcall =a(initial)         * Initialise stuff
+
+*      *--------------------------------------------------------------*
+*      * Main process loop.                                           *
+*      *--------------------------------------------------------------*
+main010  ds    0h
+         fcall =a(process)         * Print the table entry
+
+         clc   =c'KE',kw.kwid      * End-of-level entry ?
+         bne   main020             * No, keep scanning
+         clc   kw.kwlvl,=y(1)      * End of level 1 keywords ?
+         be    main080             * Yes, terminate !
+
+main020  ds    0h
+         clc   =c'KE',kw.kwid      * End-of-level entry ?
+         be    main030             * Yes, skip 2 bytes
+         clc   =c'KZ',ko.koid      * End-of-operand entry ?
+         be    main030             * Yes, skip 2 bytes
+
+         l     r14,kw.kwelen       * Get entry length
+         la    r10,kw.keyw(r14)    * Skip to next entry
+         b     main010             * And loop
+
+main030  ds    0h
+         la    r14,4(,0)           * Get entry length
+         la    r10,kw.keyw(r14)    * Skip to next entry
+         b     main010             * And loop
+
+*      *--------------------------------------------------------------*
+*      * Keyword table ends at terminating entry for level 1          *
+*      *--------------------------------------------------------------*
+main080  ds    0h
+         fcall =a(terminat)        * Clean up
+
+*      *--------------------------------------------------------------*
+*      * And return to MVS                                            *
+*      *--------------------------------------------------------------*
+main090  ds    0h
+         l     r13,mysave+4        * Get address of caller's savearea
+         la    r15,0(,0)           * Set Rc = 0
+         st    r15,16(,r13)        * Set Rc in Savearea
+         lm    r14,r12,12(r13)     * Restore callers registers
+         br    r14                 * And return to Mvs
+         cnop  0,4                 * Align
+         ltorg ,                   * Literals
+         cnop  0,4                 * Align
+         drop  r12                 * Drop routine base
+
+*      *--------------------------------------------------------------*
+*      * Initialise:                                                  *
+*      *       Open files, initialise counters, etc.                  *
+*      *                                                              *
+*      *--------------------------------------------------------------*
+initial  sub
+         open  (prfile,(OUTPUT)),                                      +
+               mode=31
+
+*      *--------------------------------------------------------------*
+*      * Get the time & date, in a format suitable for report         *
+*      * headings                                                     *
+*      *--------------------------------------------------------------*
+         time  DEC,timedate,                                           +
+               zone=LT,                                                +
+               datetype=DDMMYYYY,                                      +
+               linkage=SYSTEM
+
+         lm    r0,r1,timedate      * Get time
+         srdl  r0,36               * Isolate HHMMSS
+         n     r1,=x'fffffff0'     * Force ...
+         o     r1,=x'0000000c'     * ... +ve decimal
+         stm   r0,r1,dwd           * Save pl8'HHMMSS'
+         fcall =a(timedit)         * Convert to c'hh:mm:ss'
+
+         lm    r0,r1,timedate+8    * Get date
+         srdl  r0,28               * Isolate DDMMYYYY
+         n     r1,=x'fffffff0'     * Force ...
+         o     r1,=x'0000000c'     * ... +ve decimal
+         stm   r0,r1,dwd           * Save pl8'DDMMYYYY'
+         fcall =a(datedit)         * Convert to c'dd/mm/yyyy'
+
+         la    r15,0(,0)           * Set Rc=0
+
+         subr  ,                   * return
+
+*      *--------------------------------------------------------------*
+*      * Terminate:                                                   *
+*      *       Close files, free up aquired storage                   *
+*      *--------------------------------------------------------------*
+terminat sub
+         close (prfile,),                                              +
+               mode=31
+
+         la    r15,0(,0)           * Set Rc=0
+
+         subr  ,                   * return
+
+*      *--------------------------------------------------------------*
+*      * Process:                                                     *
+*      *       Process keyword table entries                          *
+*      * Note: Since we use BAKR and PR for subroutines, r14 in the   *
+*      *       case-type structure below must be loaded with bit 0 ON,*
+*      *       otherwise we return in amode 24 and bad things happen! *
+*      *--------------------------------------------------------------*
+process  sub
+         lm    r14,r15,=a((x'80000000'+proc090),printkw)
+         clc   =c'KW',kw.kwid      * Keyword ?
+         ber   r15                 * Yes, Process
+
+         lm    r14,r15,=a((x'80000000'+proc090),printkwe)
+         clc   =c'KE',kw.kwid      * Keyword level terminator ?
+         ber   r15                 * Yes, Process
+
+         lm    r14,r15,=a((x'80000000'+proc090),printko)
+         clc   =c'KO',ko.koid      * Operand ?
+         ber   r15                 * Yes, Process
+
+         lm    r14,r15,=a((x'80000000'+proc090),printkoe)
+         clc   =c'KZ',ko.koid      * Operand list terminator ?
+         ber   r15                 * Yes, Process
+
+proc090  ds    0h
+         subr  ,                   * return
+
+*      *--------------------------------------------------------------*
+*      * Printkw:                                                     *
+*      *       Report Keyword entry                                   *
+*      *--------------------------------------------------------------*
+printkw  sub
+         mvc   pkw001,=c'Keyword:' * Move in literal
+         #test kw.kwf1wd           * Word supplied ?
+         bno   ptkw020             * No, skip
+
+         la    r14,kw.kwword       * Address keyword
+         lh    r15,kw.kwlen        * Keyword length
+         icm   r15,8,=c' '         * Pad to blanks
+         la    r0,pkw002           * Address print field
+         la    r1,l'pkw002         * Set length
+         mvcl  r0,r14              * Move keyword
+
+ptkw020  ds    0h
+         mvc   pkw003,=c'min ='    * Move in literal
+         lh    r0,kw.kwmin         * Get minimun length
+         fcall =a(numedit)         * Edit number
+         la    r2,pkw004           * Set target
+         l     r3,=a(l'pkw004)     * Set target length
+         fcall =a(rjust)           * Right-justify
+         mvc   pkw005,=c'max ='    * Move in literal
+         lh    r0,kw.kwlen         * Get maximum length
+         fcall =a(numedit)         * Edit number
+         la    r2,pkw006           * Set target
+         l     r3,=a(l'pkw006)     * Set target length
+         fcall =a(rjust)           * Right-justify
+         mvc   pkw007,=c'level ='  * Move in literal
+         lh    r0,kw.kwlvl         * Get level
+         fcall =a(numedit)         * Edit number
+         la    r2,pkw008           * Set target
+         l     r3,=a(l'pkw008)     * Set target length
+         fcall =a(rjust)           * Right-justify
+
+         fcall =a(report)          * Add to report
+
+         subr  ,                   * Return
+
+*      *--------------------------------------------------------------*
+*      * Printkwe:                                                    *
+*      *       Report Keyword entry terminator                        *
+*      *--------------------------------------------------------------*
+printkwe sub
+         mvc   pke001,=c'End of Level:' * Move in literal
+         lh    r0,kw.kwlvl         * Get level
+         fcall =a(numedit)         * Edit number
+         la    r2,pke002           * Set target
+         l     r3,=a(l'pkw002)     * Set target length
+         fcall =a(rjust)           * Right-justify
+
+         fcall =a(report)          * Add to report
+
+         subr  ,                   * Return
+
+*      *--------------------------------------------------------------*
+*      * Printko:                                                     *
+*      *       Report operand entry                                   *
+*      *--------------------------------------------------------------*
+printko  sub
+         mvc   pko001,=c'Operand:' * Move in literal
+         #test ko.kof1wd           * Word supplied ?
+         bno   ptko020             * No, skip
+
+         la    r14,ko.koword       * Address operand
+         lh    r15,ko.kolen        * Keyword length
+         icm   r15,8,=c' '         * Pad to blanks
+         la    r0,pko002           * Address print field
+         la    r1,l'pko002         * Set length
+         mvcl  r0,r14              * Move operand
+
+ptko020  ds    0h
+         mvc   pko003,=c'min ='    * Move in literal
+         lh    r0,ko.komin         * Get minimun length
+         fcall =a(numedit)         * Edit number
+         la    r2,pko004           * Set target
+         l     r3,=a(l'pko004)     * Set target length
+         fcall =a(rjust)           * Right-justify
+         mvc   pko005,=c'max ='    * Move in literal
+         lh    r0,ko.kolen         * Get maximum length
+         fcall =a(numedit)         * Edit number
+         la    r2,pko006           * Set target
+         l     r3,=a(l'pkw006)     * Set target length
+         fcall =a(rjust)           * Right-justify
+
+         fcall =a(report)          * Add to report
+
+         subr  ,                   * Return
+
+*      *--------------------------------------------------------------*
+*      * Print:                                                       *
+*      *       Report operand entry terminator                        *
+*      *--------------------------------------------------------------*
+printkoe sub
+         mvc   pkz001,=c'End of Operands:' * Move in literal
+
+         fcall =a(report)          * Add to report
+
+         subr  ,                   * Return
+
+*      *--------------------------------------------------------------*
+*      * Report:                                                      *
+*      *       Build Report line                                      *
+*      *--------------------------------------------------------------*
+report   sub
+         l     r1,prlcnt           * Get linecount
+         c     r1,=f'56'           * Exceeded maximum ?
+         bnh   repo010             * No, write next line
+
+         fcall =a(headcom)         * Yes, write page headings
+
+*      *--------------------------------------------------------------*
+*      * Format & write 1st detail line of report                     *
+*      *--------------------------------------------------------------*
+repo010  ds    0h
+         fcall =a(writer)          * Write line out
+
+         subr  ,                   * Return
+
+*      *--------------------------------------------------------------*
+*      * Headcom:                                                     *
+*      *       Print headings (common parts)                          *
+*      *--------------------------------------------------------------*
+headcom  sub
+         mvc   prlcnt,=f'0'        * Reset line count
+         mvi   phasa,c'1'          * Request page throw
+         mvc   prhd1f1,=c'Page '   * Insert constant
+
+         l     r0,prpage           * Get Page count
+         a     r0,=f'1'            * Plus 1
+         st    r0,prpage           * Save updated count
+
+         fcall =a(numedit)         * Edit number
+         lr    r2,r0               * Copy length
+         bctr  r2,0                * Set machine length
+         mvc   prhd1f2(*-*),0(r1)  * * Executed * *
+         ex    r2,*-6              * Move number to output
+         la    r1,prhd1f2          * Address char adjacent ...
+         alr   r1,r0               * ... to number
+         mvi   0(r1),c'.'          * Insert period!
+
+         mvc   prhd1f3,=c'Keyword Table Summary'
+         mvc   prhd1f4,=c'Date '
+         mvc   prhd1f5,date
+
+         l     r4,prdcb            * Address DCB
+         put   (r4),phline         * Write header line
+
+         mvi   phasa,c' '          * Asa for newline
+         la    r0,phdata           * Address data
+         l     r1,=a(l'phdata)     * Get data length
+         lr    r14,r0              * Copy data address
+         l     r15,=al1(c' ',0,0,0)    * Set to clear to x'40's
+         mvcl  r0,r14              * Clear print line to spaces
+
+         mvc   prhd1f6,=c'Time '
+         mvc   prhd1f7,time
+
+         l     r4,prdcb            * Address DCB
+         put   (r4),phline         * Write header line
+
+         subr  ,                   * Return
+
+*      *--------------------------------------------------------------*
+*      * Writer:                                                      *
+*      *       Write print file                                       *
+*      *--------------------------------------------------------------*
+writer   sub
+         l     r4,prdcb            * Address DCB
+         put   (r4),prline         * Write print line
+
+         l     r0,prlcnt           * Get linecount
+         a     r0,=f'1'            * Increment
+         st    r0,prlcnt           * Update linecount
+
+         fcall =a(clearlin)        * Clear output line
+
+         subr  ,                   * Return
+
+*      *--------------------------------------------------------------*
+*      * Clearlin:                                                    *
+*      *       Clear out print line                                   *
+*      *--------------------------------------------------------------*
+clearlin sub
+         mvi   prasa,c' '          * Asa for newline
+         la    r0,prdata           * Address data
+         l     r1,=a(l'prdata)     * Get data length
+         lr    r14,r0              * Copy data address
+         l     r15,=al1(c' ',0,0,0)    * Set to clear to x'40's
+         mvcl  r0,r14              * Clear print line to spaces
+
+         subr  ,                   * Return
+
+*      *--------------------------------------------------------------*
+*      * Numedit:                                                     *
+*      *       Edit a number nicely from value in r0.                 *
+*      *       On output r1 @ number                                  *
+*      *                 r0 = Length                                  *
+*      *--------------------------------------------------------------*
+numedit  sub
+         cvd   r0,dwd              * Convert page count -> decimal
+         mvc   worka(16),=x'40202020202020202020202020202120'
+         la    r1,worka+15         * Preset significant digit
+         edmk  worka(16),dwd       * Edit number
+         lr    r0,r1               * Copy position of 1st ...
+*                                  * ... significant digit
+         la    r3,worka            * Get start position
+         sr    r0,r3               * Caclulate ...
+         a     r0,=a(-16)          * ... significant ...
+         lpr   r0,r0               * ... length
+
+         subr  ,                   * Return
+
+*      *--------------------------------------------------------------*
+*      * Datedit:                                                     *
+*      *       Edit a pl4'ddmmyyyy' to c'dd/mm/yyyy'                  *
+*      *       On output r1 @ number                                  *
+*      *                 r0 = Length                                  *
+*      *--------------------------------------------------------------*
+datedit  sub
+         mvc   worka(12),=x'402120206120206120202020'
+         ed    worka(12),dwd+3     * Edit number
+         mvc   date,worka+2        * Save edited value
+
+         subr  ,                   * Return
+
+*      *--------------------------------------------------------------*
+*      * Timedit:                                                     *
+*      *       Edit a pl4'hhmmss' to c'hh:mm:ss'                      *
+*      *       On output r1 @ number                                  *
+*      *                 r0 = Length                                  *
+*      *--------------------------------------------------------------*
+timedit  sub
+         mvc   worka(10),=x'402120207a20207a2020'
+         ed    worka(10),dwd+4      * Edit number
+         mvc   time,worka+2        * Save edited value
+
+         subr  ,                   * Return
+
+*      *--------------------------------------------------------------*
+*      * Rjust:                                                       *
+*      *       Right-justify data into output area                    *
+*      *       On input  r1 @ source                                  *
+*      *                 r0 = Length                                  *
+*      *                 r2 @ target                                  *
+*      *                 r3 = Length                                  *
+*      *--------------------------------------------------------------*
+rjust    sub
+         lr    r4,r0               * Source length
+         sr    r3,r0               * Calculate difference in length
+         la    r3,0(r3,r2)         * Calculate offset into target
+         bctr  r4,0                * Machine length
+         mvc   0(*-*,r3),0(r1)     * * Executed * *
+         ex    r4,*-6              * Copy source to target field
+
+         subr  ,                   * Return
+
+*      *--------------------------------------------------------------*
+*      * Data areas                                                   *
+*      *--------------------------------------------------------------*
+keytzdat csect ,
+dwd      dc    d'0'                * Doubleword aligned doubleword
+mysave   dc    18f'0'              * Savearea
+timedate dc    xl16'00'            * Time/Date
+bigpack  dc    pl16'0'             * Big decimal area
+time     dc    cl8' '              * Time c'hh:mm:ss'
+date     dc    cl10' '             * Date c'dd/mm/yyyy'
+fdate    dc    cl10' '             * Date from file header
+worka    dc    xl64'00'            * Handy workarea
+sectw    dc    cl2' '              * Section work area
+
+*      *--------------------------------------------------------------*
+*      * Print areas                                                  *
+*      *--------------------------------------------------------------*
+prline   ds    0xl133              * Print line
+prasa    dc    cl1' '              * ASA carriage control
+prdata   dc    cl132' '            * Output area
+
+phline   ds    0xl133              * Print Headers
+phasa    dc    cl1'1'              * ASA carriage control
+phdata   dc    cl132' '            * Output area
+
+*      *--------------------------------------------------------------*
+*      * Common print headings                                        *
+*      *--------------------------------------------------------------*
+         org   phdata+0
+prhd1f1  ds    c'Page '
+prhd1f2  ds    c'xxxxx'
+
+         org   phdata+((l'phdata-l'prhd1f3)/2)
+prhd1f3  ds    c'Keyword Table Summary'
+
+         org   phdata+116
+prhd1f4  ds    c'Date '
+prhd1f5  ds    c'dd/mm/yyyy'
+
+         org   phdata+116
+prhd1f6  ds    c'Time '
+prhd1f7  ds    c'hh:mm:ss'
+
+*      *--------------------------------------------------------------*
+*      * Report line for keyword entries                              *
+*      *--------------------------------------------------------------*
+         org   prdata
+pkw001   ds    c'Keyword:'             *
+         org   prdata+10
+pkw002   ds    c'xxxxxxxxxxxxxxxxxxxx' * Keyword (assuming max. 20)
+         org   prdata+31
+pkw003   ds    c'min ='                *
+         org   prdata+37
+pkw004   ds    c'xxxx'                 * Minimum length
+         org   prdata+42
+pkw005   ds    c'max ='                *
+         org   prdata+48
+pkw006   ds    c'xxxx'                 * Maximum length
+         org   prdata+53
+pkw007   ds    c'level ='              *
+         org   prdata+61
+pkw008   ds    c'xx'                   * Level
+
+*      *--------------------------------------------------------------*
+*      * Report line for keyword terminators                          *
+*      *--------------------------------------------------------------*
+         org   prdata
+pke001   ds    c'End of Level'         *
+         org   prdata+14
+pke002   ds    c'xx'                   * Level
+
+*      *--------------------------------------------------------------*
+*      * Report line for operand entries                              *
+*      *--------------------------------------------------------------*
+         org   prdata
+pko001   ds    c'Operand:'             *
+         org   prdata+10
+pko002   ds    c'xxxxxxxxxxxxxxxxxxxx' * Operand (assuming max. 20)
+         org   prdata+31
+pko003   ds    c'min ='                *
+         org   prdata+37
+pko004   ds    c'xxxx'                 * Minimum length
+         org   prdata+42
+pko005   ds    c'max ='                *
+         org   prdata+48
+pko006   ds    c'xxxx'                 * Maximum length
+
+*      *--------------------------------------------------------------*
+*      * Report line for Operand terminators                          *
+*      *--------------------------------------------------------------*
+         org   prdata
+pkz001   ds    c'End of operands'      *
+         org   ,
+
+         ds    0f
+prlcnt   dc    f'57'               * Linecount
+prpage   dc    f'0'                * Pagecount
+prdcb    dc    a(prfile)           * DCB
+
+prfile   dcb   ddname=SYSPRINT,                                        +
+               macrf=(PM),                                             +
+               dcbe=prfdcbe,                                           +
+               dsorg=PS,                                               +
+               recfm=FBA,                                              +
+               lrecl=132
+
+prfdcbe  dcbe  rmode31=BUFF
+
+         keyw  dsect               * Map Keyword entry
+         keyop dsect               * Map Operand entry
+
+         regequ ,                  * Register equates
+         end   ,                   * C'est la!

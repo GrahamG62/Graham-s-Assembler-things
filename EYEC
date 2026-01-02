@@ -12,5 +12,5 @@
          dc    c'&v..&r&m '
          dc    c'&systime '
          dc    c'&ddate./&mdate./&ydate '
-         dc    c'(c) &ydate All rights reserved, Caddis Systems'
+         dc    c'(c) &ydate All rights reserved, Caddis Systems Ltd. '
          MEND

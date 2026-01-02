@@ -1,0 +1,4 @@
+         MACRO
+&lab     TEST  &flag
+&lab     tm    &flag,l'&flag
+         MEND

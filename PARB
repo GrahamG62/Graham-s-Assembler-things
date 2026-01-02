@@ -1,0 +1,40 @@
+         MACRO
+         PARB  &type=
+
+.*     *--------------------------------------------------------------*
+.*     * #parb Map Parser block                                       *
+.*     *--------------------------------------------------------------*
+
+&utyp    setc  (upper '&type')
+         aif   ('&utyp' eq 'DSECT').dct000,                            +
+               ('&utyp' eq 'NOSECT').nct000
+         mnote 8,'Parb - Invalid request type &utyp'
+         mexit
+
+.*     *--------------------------------------------------------------*
+.*     * Generate mapping Dsect                                       *
+.*     *--------------------------------------------------------------*
+.dct000  anop
+parb     dsect ,
+.nct000  anop
+prid     ds    cl4                 * Eye-catcher
+prforw   ds    al4                 * Forward pointer
+prback   ds    al4                 * Backward pointer
+prtabe   ds    al4                 * Keyword table entry
+prtabo   ds    al4                 * Operand entry, or x'00's
+prwlen   ds    f                   * Word length
+prfwd    ds    f                   * Numeric value as fwd
+prhwd    ds    al2                 * Numeric value as hwd
+prpk     ds    pl8                 * Numeric value as packed
+prlvl    ds    al1                 * Current level
+provct   ds    al1                 * Operand vector
+prflg1   ds    xl1                 * Flag #1
+prfpre   equ   prflg1,x'80'        *   Preprocess
+prfpst   equ   prflg1,x'40'        *   Postprocess
+prflg2   ds    xl1                 * Flag #2
+prfker   equ   prflg2,x'80'        *   Keyword in error
+prfoer   equ   prflg2,x'40'        *   Operand in error
+prxlen   equ   *-prtabe            * Length to clear on iteration
+prword   ds    cl256               * Word
+pruwrd   ds    cl256               * Upper-case word
+         MEND

@@ -1,0 +1,80 @@
+CZLENT   title 'Bootstrap'
+*      *--------------------------------------------------------------*
+*      * Bootstrap                                                    *
+*      *                                                              *
+*      *--------------------------------------------------------------*
+czlent   csect ,
+czlent   amode 31                  *
+czlent   rmode any                 *
+
+         using czlent,r15          * Temporary Base register
+         stm   r14,r12,12(r13)     * Save caller's registers on stack
+         b     main000             * Skip eye-catchers, etc.
+
+         cnop  0,4
+         eyec  ,                   * Eye-catchers
+         cnop  0,4
+         drop  r15                 * Drop temporary base
+
+*      *--------------------------------------------------------------*
+*      * Global mapping, etc...                                       *
+*      *--------------------------------------------------------------*
+main000  ds    0h
+         lae   r12,0(r15,0)        * Transfer base address
+         using czlent,r12          * Make code addressable
+
+*      *--------------------------------------------------------------*
+*      * Create and initialise stack                                  *
+*      *--------------------------------------------------------------*
+         la    r0,mystgl           * Length to get
+         storage OBTAIN,                                               +
+               loc=ANY,                                                +
+               length=(r0),                                            +
+               addr=(r10)
+         using mystg,r10           * Map it
+
+         stkr  create,                                                 +
+               gets==v(czlstg),                                        +
+               free==v(czlstf),                                        +
+               stvl==a(srbhlen),                                       +
+               mf=(E,stack)
+
+
+*      *--------------------------------------------------------------*
+*      * Call whatever ... r13 @ 1st stack entry                      *
+*      *--------------------------------------------------------------*
+         zcall =v(czltst)          * Call application
+*        zcall =v(czldl1)          * Call application
+
+         lr    r4,r15              * Save return code
+
+*      *--------------------------------------------------------------*
+*      * Destroy stack                                                *
+*      *--------------------------------------------------------------*
+         stkr  destroy,            * Destroy Stack                     +
+               mf=(E,stack)
+
+         la    r0,mystgl           * Length to free
+         storage RELEASE,                                              +
+               length=(r0),                                            +
+               addr=(r10)
+         drop  r10
+
+         lr    r15,r4              * Set Rc
+
+main090  ds    0h
+         mace  r15                 * Set up r15 for return code
+         lm    r14,r12,12(r13)     * Restore caller's registers
+         br    r14                 * And return
+
+         cnop  0,4                 * Align
+         ltorg ,                   * Literals
+         cnop  0,4                 * Align
+
+mystg    dsect                     * My area
+stack    stkr  plist               * Parameter list for stack
+mystgl   equ   *-mystg             * Length
+
+         czlblk ,                  * Our area
+         regequ ,                  * Register equates
+         end   ,                   * C'est la!

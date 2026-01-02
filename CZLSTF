@@ -1,0 +1,48 @@
+CZLSTF   title 'Free storage'
+*      *--------------------------------------------------------------*
+*      * Generalised storage Free                                     *
+*      *                                                              *
+*      * (c) Caddis Systems Ltd 2001, All rights reserved             *
+*      * v1.000                                                       *
+*      *                                                              *
+*      * r0    Storage length                                         *
+*      * r1    Storage address                                        *
+*      *                                                              *
+*      *--------------------------------------------------------------*
+czlstf   rsect ,
+czlstf   amode 31
+czlstf   rmode any
+
+         using czlstf,r15          * Temporary Base register
+         stm   r14,r12,12(r13)     * Save callers registers
+         b     main000             * Skip eye-catchers, etc.
+
+         cnop  0,4
+         eyec  ,                   * Eye-catchers
+         cnop  0,4
+         drop  r15                 * Drop temporary base
+
+*      *--------------------------------------------------------------*
+*      * Global mapping, etc...                                       *
+*      *--------------------------------------------------------------*
+main000  ds    0h
+         lae   r12,0(r15,0)        * Transfer base address
+         using czlstf,r12          * Make code addressable
+
+*      *--------------------------------------------------------------*
+*      * Free storage                                                 *
+*      *--------------------------------------------------------------*
+main020  ds    0h
+         storage RELEASE,                                              +
+               length=(r0),                                            +
+               addr=(r1)
+
+         lm    r14,r12,12(r13)     * Restore callers registers
+         br    r14                 * And return to caller
+
+         drop  r12                 * Drop base
+         cnop  0,4                 * Align
+         ltorg ,                   * Literals
+         cnop  0,4                 * Align
+         regequ ,                  * Register equates
+         end   ,                   * C'est la!

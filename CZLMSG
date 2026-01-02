@@ -1,0 +1,807 @@
+CZLMSG   title 'Message formatter/issuer'
+*      *--------------------------------------------------------------*
+*      * Generalised message formatter/issuer!                        *
+*      *                                                              *
+*      * (c) Caddis Systems Ltd 2001, All rights reserved             *
+*      * v1.000                                                       *
+*      *--------------------------------------------------------------*
+czlmsg   rsect ,
+czlmsg   amode 31                  * Use ALL the storage available
+czlmsg   rmode any                 * Run anywhere!
+
+         stkr  get,id=ZMSG,base=r10
+{{
+wkdwd    ds    d                   * Doubleword-aligned doubleword
+wkmsgad  ds    al4                 * Address of message skeleton
+wkmsgln  ds    al4                 * Length of message skeleton
+wkcpt    ds    al4                 * Current address in message area
+wkcln    ds    al4                 * Current length of message area
+wkrem    ds    al4                 * Remaining message area
+wkedit   ds    xl20                * Edit work area
+wkmsg    ds    cl256               * Output message
+wkconl   ds    y                   * Output message length
+wkcon    ds    cl256               * Output console message
+wkpad    ds    cl256               * Spare area
+wkjst    ds    cl40                * Area for justifying into
+wkwtop   wto   text=(r0),mf=L      * Build Parm list for WTO
+wkwtol   wto   text=(r0),linkage=,mf=L  * Build Parm list for WTO
+}}
+         lae   r12,0(r15,0)        * Transfer base address
+         using czlmsg,r12          * Make code addressable
+         b     main000             * Skip eye-catchers, etc.
+
+         cnop  0,4
+         eyec  ,                   * Eye-catchers
+         cnop  0,4
+
+*      *--------------------------------------------------------------*
+*      * Global mapping, etc...                                       *
+*      *--------------------------------------------------------------*
+main000  ds    0h
+         l     r11,0(,r1)          * Address Message request block
+         using msgrb,r11           * Map Message request block
+sub      using mssubs,r9           * Map Substitution list entry
+
+*      *--------------------------------------------------------------*
+*      * Initialise work area                                         *
+*      *--------------------------------------------------------------*
+         la    r5,wkmsg            * Address message build area
+         st    r5,wkcpt            * Save as current pointer
+         mvc   wkcln,=al4(0)       * Initialise length
+         mvc   wkrem,=al4(l'wkmsg) * Initialise length remaining
+
+*      *--------------------------------------------------------------*
+*      * Locate the message                                           *
+*      *--------------------------------------------------------------*
+         zcall =a(locmsg)          * Locate message
+         bnz   main080             * Nope, just terminate
+
+*      *--------------------------------------------------------------*
+*      * Build message prefix                                         *
+*      *--------------------------------------------------------------*
+         zcall =a(prefix)          * Build message prefix
+
+*      *--------------------------------------------------------------*
+*      * Scan & build output message                                  *
+*      *--------------------------------------------------------------*
+         zcall =a(fmtmsg)          * Format message
+
+*      *--------------------------------------------------------------*
+*      * Return the message to caller's area if requested             *
+*      *--------------------------------------------------------------*
+         test  msf1ret             * Return message ?
+         bno   main010             * No, skip
+         zcall =a(retmsg)          * Return message
+
+*      *--------------------------------------------------------------*
+*      * Issue message on console                                     *
+*      *--------------------------------------------------------------*
+main010  ds    0h
+         test  msf1con             * Issue message ?
+         bno   main020             * No, skip
+         zcall =a(consmsg)         * Issue message
+
+main020  ds    0h
+         la    r1,wkmsg            * Get formatted message address
+         l     r0,wkcln            * Get message length for caller
+
+main080  ds    0h
+         stkr  free,keep=(r15,r1)  * Free stack entry
+
+main090  ds    0h
+         br    r14                 * And return to caller
+
+         cnop  0,4                 * Align
+         ltorg ,                   * Literals
+         cnop  0,4                 * Align
+         drop  r12                 * Drop routine base
+
+         title 'Locate message source'
+*      *--------------------------------------------------------------*
+*      * Locate message source                                        *
+*      *--------------------------------------------------------------*
+locmsg   sub   path=fast
+         test  msf2skl             * Skeleton provided ?
+         bo    locm080             * Yes, use skeleton
+
+         l     r8,mstable          * Address message table
+         using megent,r8           * Map message table entry
+
+locm000  ds    0h
+         clc   mssnum,megnum       * Matching message number ?
+         be    locm020             * Yes, use message
+         bl    locm010             * Low, not found
+
+         icm   r8,15,megnext       * No, try next number
+         bnz   locm000             * And loop
+
+*      *--------------------------------------------------------------*
+*      * No matching message - use default                            *
+*      *--------------------------------------------------------------*
+locm010  ds    0h
+         la    r14,defmsg          * Default if not found
+         st    r14,wkmsgad         * Save message address
+         lh    r14,=y(l'defmsg)    * Skeleton length
+         st    r14,wkmsgln         * Save message length
+         mvi   mssev,c'W'          * Set severity
+         la    r15,0(,0)           * Set Rc=0
+         b     locm090             * And return
+
+*      *--------------------------------------------------------------*
+*      * Found message in table                                       *
+*      *--------------------------------------------------------------*
+locm020  ds    0h
+         la    r14,megtxt          * Address message text
+         st    r14,wkmsgad         * Save message address
+         lh    r14,meglen          * Message length
+         st    r14,wkmsgln         * Save message length
+         mvc   mssev,megsev        * Save message severity
+         la    r15,0(,0)           * Set Rc=0
+         b     locm090             * And return
+
+         drop  r8                  * Drop message table
+
+*      *--------------------------------------------------------------*
+*      * Address message skeleton                                     *
+*      *--------------------------------------------------------------*
+locm080  ds    0h
+         l     r14,msskel          * Skeleton
+         st    r14,wkmsgad         * Save message address
+         lh    r14,mssklen         * Skeleton length
+         st    r14,wkmsgln         * Save message length
+         la    r15,0(,0)           * Set Rc=0
+
+locm090  ds    0h
+         subr  r15,cc=yes,path=fast
+
+defmsg   dc    c'Invalid message! parms: @0 @1 @2 @3 @4 @5 @6 @7 @8 @9 +
+               @A @B @C @D @E @F'
+
+         title 'Build message prefix'
+*      *--------------------------------------------------------------*
+*      * Insert prefix                                                *
+*      *--------------------------------------------------------------*
+prefix   sub   ,
+         clc   =xl3'00',msprfx     * Got a message prefix ?
+         be    pref010             * No, skip
+         mvc   0(3,r5),msprfx      * Yes, move it in
+         la    r5,3(,r5)           * Bump pointer
+         la    r0,3(,0)            * Set length
+         a     r0,wkcln            * ... and increment ..
+         st    r0,wkcln            * ... message length
+
+*      *--------------------------------------------------------------*
+*      * Insert module id                                             *
+*      *--------------------------------------------------------------*
+pref010  ds    0h
+         clc   =xl3'00',msmodl     * Got a module id ?
+         be    pref020             * No, skip
+         mvc   0(3,r5),msmodl      * Yes, move it in
+         la    r5,3(,r5)           * Bump pointer
+         la    r0,3(,0)            * Set length
+         a     r0,wkcln            * ... and increment ..
+         st    r0,wkcln            * ... message length
+
+*      *--------------------------------------------------------------*
+*      * Insert message number                                        *
+*      *--------------------------------------------------------------*
+pref020  ds    0h
+         icm   r0,3,mssnum         * Got a message number ?
+         bz    pref030             * No, skip
+         la    r1,4(,0)            * 4 significant digits
+         zcall =a(numedit)         * Yes, convert to printable
+         mvc   0(4,r5),0(r1)       * Move it in !
+         la    r5,4(,r5)           * Bump pointer
+         la    r0,4(,0)            * Set length
+         a     r0,wkcln            * ... and increment ..
+         st    r0,wkcln            * ... message length
+
+*      *--------------------------------------------------------------*
+*      * Insert message severity                                      *
+*      *--------------------------------------------------------------*
+pref030  ds    0h
+         clc   =xl1'00',mssev      * Got a message severity ?
+         be    pref040             * No, skip
+         mvc   0(1,r5),mssev       * Yes, move it in
+         la    r5,1(,r5)           * Bump pointer
+         la    r0,1(,0)            * Set length
+         a     r0,wkcln            * ... and increment ..
+         st    r0,wkcln            * ... message length
+
+*      *--------------------------------------------------------------*
+*      * Add a space if any prefix fields inserted                    *
+*      *--------------------------------------------------------------*
+pref040  ds    0h
+         la    r1,wkmsg            * Address message build area
+         cr    r1,r5               * Any insertions so far ?
+         be    pref050             * No, skip
+
+         mvi   0(r5),c' '          * Move in a space
+         la    r5,1(,r5)           * Bump pointer
+         la    r0,1(,0)            * Set length
+         a     r0,wkcln            * ... and increment ..
+         st    r0,wkcln            * ... message length
+
+pref050  ds    0h
+         st    r5,wkcpt            * Save as current pointer
+
+pref090  ds    0h
+         subr  ,
+
+         title 'Scan && build message'
+*      *--------------------------------------------------------------*
+*      * Insert prefix                                                *
+*      *--------------------------------------------------------------*
+fmtmsg   sub   ,
+         cli   mssind,x'00'        * Substitution indicator provided?
+         bne   *+10                * Yes, skip
+         mvc   mssind,fmtind       * No, use default
+
+         l     r5,wkcpt            * Get current output pointer
+         l     r6,wkcln            * Get current output length
+         l     r7,wkmsgad          * Get message skeleton address
+         l     r8,wkmsgln          * Get message skeleton length
+
+*      *--------------------------------------------------------------*
+*      * Loop through message, formatting as required                 *
+*      *--------------------------------------------------------------*
+fmtm010  ds    0h
+         clc   wkrem,=a(0)         * Space left in build area ?
+         bnh   fmtm080             * No, can't do any more !
+
+         clc   0(1,r7),mssind      * Substitution indicator ?
+         be    fmtm020             * Yes, go process
+
+         mvc   0(1,r5),0(r7)       * No, copy character
+         la    r5,1(,r5)           * Increment output address
+         la    r6,1(,r6)           * Increment output length
+         sh    r8,=h'1'            * Decrement input length
+         bnp   fmtm080             * No more input, finished!
+
+         la    r7,1(,r7)           * Increment input address
+         b     fmtm010             * Loop for next character
+
+*      *--------------------------------------------------------------*
+*      * Found substitution character                                 *
+*      *--------------------------------------------------------------*
+fmtm020  ds    0h
+         xr    r4,r4               * Clear for ICM
+         icm   r4,3,mssubc         * Got a substitution count ?
+         bz    fmtm030             * No, skip entirely!
+
+         bctr  r4,0                * Id's start at 0!!!
+         la    r7,1(,r7)           * Bump to substitution id
+         bctr  r8,0                * Knock 1 off the length
+         xr    r0,r0               * Clear for IC
+         la    r1,0(,r7)           * Address id
+         la    r0,1(,0)            * Set length
+         zcall =a(hextobin)        * Convert to binary
+         bnz   fmtm070             * Invalid, report error
+
+         cr    r0,r4               * Fits within range ?
+         bh    fmtm030             * No, ignore it
+
+         lr    r1,r0               * Copy id
+         mh    r1,=al2(mssubl)     * Calculate index value
+         la    r9,mssubs(r1)       * Address requisite entry
+         st    r5,wkcpt            * Set address
+         st    r6,wkcln            * Set length
+
+         zcall =a(substr)          * Go substitute
+
+         l     r5,wkcpt            * Retrieve address
+         l     r6,wkcln            * Retrieve length
+
+         sh    r8,=h'1'            * Decrement input length
+         bnp   fmtm080             * No more input, finished!
+
+         la    r7,1(,r7)           * Increment input address
+         b     fmtm010             * Loop for next character
+
+*      *--------------------------------------------------------------*
+*      * Found substitution character & id, but not supplied          *
+*      *--------------------------------------------------------------*
+fmtm030  ds    0h
+         sh    r8,=h'2'            * Decrement input length
+         bnp   fmtm080             * No more input, finished!
+
+         la    r7,2(,r7)           * Increment input address
+         b     fmtm010             * Loop for next character
+
+*      *--------------------------------------------------------------*
+*      * Invalid substitution id, skip it!!!!!                        *
+*      *--------------------------------------------------------------*
+fmtm070  ds    0h
+         sh    r8,=h'1'            * Decrement input length
+         bnp   fmtm080             * No more input, finished!
+
+         la    r7,1(,r7)           * Increment input address
+         b     fmtm010             * Loop for next character
+
+*      *--------------------------------------------------------------*
+*      * All substitutions done, update pointers etc.                 *
+*      *--------------------------------------------------------------*
+fmtm080  ds    0h
+         st    r5,wkcpt            * Set current output pointer
+         st    r6,wkcln            * Set current output length
+
+fmtm090  ds    0h
+         subr  (r15,r1)
+fmtind   dc    cl1'@'              * Substitution indicator
+
+         title 'Perform Substitutions'
+*      *--------------------------------------------------------------*
+*      * Perform substitution                                         *
+*      *--------------------------------------------------------------*
+substr   sub   ,
+         lm    r14,r15,=a(subs080,charsub)
+         cli   sub.msstyp,c'C'     * Character string ?
+         ber   r15                 * Yes, Process
+
+         lm    r14,r15,=a(subs080,bintonum)
+         cli   sub.msstyp,c'R'     * Value in Parmlist ?
+         ber   r15                 * Yes, Process
+
+         cli   sub.msstyp,c'F'     * Fullword value ?
+         ber   r15                 * Yes, Process
+
+         cli   sub.msstyp,c'H'     * Halfword value ?
+         ber   r15                 * Yes, Process
+
+         lm    r14,r15,=a(subs080,hextchar)
+         cli   sub.msstyp,c'A'     * Value in Parmlist ?
+         ber   r15                 * Yes, Process
+
+         cli   sub.msstyp,c'X'     * Fullword value ?
+         ber   r15                 * Yes, Process
+
+         lm    r14,r15,=a(subs080,dectonum)
+         cli   sub.msstyp,c'P'     * Value in Parmlist ?
+         ber   r15                 * Yes, Process
+
+*      *--------------------------------------------------------------*
+*      * Update pointers & lengths. r0 = new pointer, r1 = length     *
+*      *--------------------------------------------------------------*
+subs080  ds    0h
+         lr    r2,r1               * Copy length inserted
+         st    r0,wkcpt            * Save updated output pointer
+         l     r0,wkrem            * Get length remaining
+         sr    r0,r1               * Update length ...
+         st    r0,wkrem            * ... remaining
+         a     r1,wkcln            * Update current ...
+         st    r1,wkcln            * ... output length
+
+         cli   sub.mssjst,0        * Justification required ?
+         be    subs090             * Nope, just return
+
+*      *--------------------------------------------------------------*
+*      * Right-justify the string just inserted in output             *
+*      *--------------------------------------------------------------*
+         sr    r3,r3               * Clear for IC
+         ic    r3,sub.mssjst       * Get justification value
+         cr    r2,r3               * Compare with length inserted
+         bnl   subs090             * Not less, just return
+
+         sr    r3,r2               * Calculate difference
+         l     r0,wkcpt            * Get output position
+         lr    r1,r3               * Get length
+         c     r1,wkrem            * Check length remaining
+         bnh   *+8                 * Ok, skip
+         l     r1,wkrem            * Limit to length remaining
+         lr    r14,r0              * Copy position
+         l     r15,=al1(c' ',0,0,0)  * Set to clear to blanks
+         mvcl  r0,r14              * Clear the remaining space
+         st    r0,wkcpt            * Save updated output pointer
+         l     r0,wkrem            * Get length remaining
+         sr    r0,r3               * Update length ...
+         st    r0,wkrem            * ... remaining
+         a     r3,wkcln            * Update current ...
+         st    r3,wkcln            * ... output length
+
+subs090  ds    0h
+         subr  (r15,r1)
+
+         title 'Insert Character string'
+*      *--------------------------------------------------------------*
+*      * Insert Character string                                      *
+*      *--------------------------------------------------------------*
+charsub  sub   ,
+         l     r0,wkcpt            * Get current pointer
+         xr    r1,r1               * Clear for IC
+         ic    r1,sub.msslen       * Get String length
+         c     r1,wkrem            * Room to fit it in ?
+         bnh   *+8                 * Yes, skip
+         l     r1,wkrem            * No, set as a limit
+
+         test  msf1sup             * Suppress blanks ?
+         bno   char010             * No, skip
+
+         l     r2,sub.mssadr       * Get string address
+         zcall =a(suppres)         * Suppress blanks & x'00's
+
+         lr    r2,r1               * Copy length
+         b     char020             * Onwards
+
+char010  ds    0h
+         lr    r2,r1               * Copy length
+         l     r14,sub.mssadr      * Get string address
+         lr    r15,r1              * Copy length
+         mvcl  r0,r14              * Copy string
+
+char020  ds    0h
+         l     r3,wkcpt            * Get current pointer
+         lr    r4,r2               * Copy length
+         bctr  r4,0                * Decrement
+         l     r5,=a(msgprtab)     * Address 'printable characters'
+         tr    0(*-*,r3),0(r5)     * * Executed * *
+         ex    r4,*-6              * Translate out unprintables
+
+         lr    r1,r2               * Copy length
+
+char090  ds    0h
+         subr  (r15,r1)
+
+         title 'Insert binary value as numeric'
+*      *--------------------------------------------------------------*
+*      * Insert Numeric value from binary value                       *
+*      *--------------------------------------------------------------*
+bintonum sub   ,
+         l     r0,sub.mssadr       * Get fullword
+         cli   sub.msstyp,c'R'     * Is it fullword in parmlist ?
+         be    bint080             * Yes, go process
+
+         l     r2,sub.mssadr       * Get a(value)
+
+         l     r0,0(,r2)           * Get value
+         cli   sub.msstyp,c'F'     * Is it fullword ?
+         be    bint080             * Yes, go process
+
+         lh    r0,0(,r2)           * Get value
+         cli   sub.msstyp,c'H'     * Is it halfword ?
+         be    bint080             * Yes, go process
+
+         l     r0,0(,r2)           * Default is fullword !
+
+bint080  ds    0h
+         la    r1,1(,0)            * 1 significant digit
+         zcall =a(numedit)
+
+         lr    r14,r1              * Copy address
+         lr    r15,r0              * Copy length
+
+         l     r0,wkcpt            * Get current pointer
+         lr    r1,r15              * Copy length
+         lr    r2,r15              * Copy length
+         mvcl  r0,r14              * Copy string
+
+         lr    r1,r2               * Copy length
+
+bint090  ds    0h
+         subr  (r15,r1)
+
+         title 'Insert hexadecimal as character'
+*      *--------------------------------------------------------------*
+*      * Insert hex value from binary value                           *
+*      *--------------------------------------------------------------*
+hextchar sub   path=fast
+         la    r2,sub.mssadr       * Get fullword
+         la    r3,4(,0)            * Set length = 4
+         cli   sub.msstyp,c'A'     * Is it fullword in parmlist ?
+         be    hexc010             * Yes, go process
+
+         l     r2,sub.mssadr       * Get a(value)
+         xr    r3,r3               * Clear for IC
+         ic    r3,sub.msslen       * Get length
+
+hexc010  ds    0h
+         lr    r4,r3               * Copy length
+         la    r5,wkpad            * Address output
+
+hexc020  ds    0h
+         unpk  0(3,r5),0(2,r2)     * Unpack
+         tr    0(3,r5),hexctr-c'0' * Tidy up
+         la    r5,2(,r5)           * Bump output by 2
+         la    r2,1(,r2)           * Bump input by 1
+         bct   r3,hexc020          * Loop for next input byte
+
+         sll   r4,1                * Multiply length by 2
+         la    r14,wkpad           * Copy address
+         lr    r15,r4              * Copy length
+
+         l     r0,wkcpt            * Get current pointer
+         lr    r1,r15              * Copy length
+         lr    r2,r15              * Copy length
+         mvcl  r0,r14              * Copy string
+
+         lr    r1,r2               * Copy length
+
+hexc090  ds    0h
+         subr  (r15,r1),path=fast
+
+         org   *+c'0'
+hexctr   dc    c'0123456789ABCDEF'
+         org   ,
+
+         title 'Insert decimal value as numeric'
+*      *--------------------------------------------------------------*
+*      * Insert numeric value from decimal value                      *
+*      *--------------------------------------------------------------*
+dectonum sub   ,
+         l     r2,sub.mssadr       * Get a(value)
+         xr    r3,r3               * Clear for IC
+         ic    r3,sub.msslen       * Get length
+
+         c     r3,=f'16'           * Within limits ?
+         bnh   *+8                 * Yes, skip
+         l     r3,=f'16'           * No, limit to 16 bytes !
+
+         bctr  r3,0                * Decrement for execute
+         ex    r3,dectzap          * Copy value to dwd
+
+         cvb   r0,wkdwd            * Convert -> binary
+         la    r1,1(,0)            * 1 significant digit
+         zcall =a(numedit)
+
+         lr    r14,r1              * Copy address
+         lr    r15,r0              * Copy length
+
+         l     r0,wkcpt            * Get current pointer
+         lr    r1,r15              * Copy length
+         lr    r2,r15              * Copy length
+         mvcl  r0,r14              * Copy string
+
+         lr    r1,r2               * Copy length
+
+dect090  ds    0h
+         subr  (r15,r1)
+dectzap  zap   wkdwd,0(*-*,r2)     * * Executed * *
+
+         title 'Suppress blanks and binary zeroes'
+*      *--------------------------------------------------------------*
+*      * Suppress blanks and x'00's                                   *
+*      *--------------------------------------------------------------*
+suppres  sub   path=fast
+         lr    r3,r2               * Input address
+         lr    r6,r0               * Output address
+         la    r4,1(,0)            * Increment = 1
+         lr    r5,r2               * Set input address ...
+         ar    r5,r1               * ... plus length ...
+         bctr  r5,0                * ... less 1 as limit
+         xr    r0,r0               * R0=0, flags 1st blank character
+         xr    r7,r7               * Initialise output length
+
+supp010  ds    0h
+         cli   0(r3),x'00'         * x'00' ?
+         be    supp050             * Yes, skip
+
+         cli   0(r3),c' '          * Blank ?
+         bne   supp020             * No, process non-blank
+
+         ltr   r0,r0               * First blank ?
+         bz    supp030             * Yes
+         b     supp050             * No
+
+supp020  ds    0h
+         xr    r0,r0               * Reset blank suppress
+         b     supp040             * Onwards
+
+supp030  ds    0h
+         la    r0,1(,0)            * Indicate 1st blank scanned
+
+supp040  ds    0h
+         mvc   0(1,r6),0(r3)       * Copy input -> output
+         la    r6,1(,r6)           * Bump output pointer
+         la    r7,1(,r7)           * Bump output length
+
+supp050  ds    0h
+         bxle  r3,r4,supp010       * Loop for next message character
+
+         ltr   r0,r0               * Last character was blank ?
+         bz    supp060             * No, skip
+         bctr  r6,0                * Yes, decrement address by 1
+         bctr  r7,0                * Yes, decrement length by 1
+
+supp060  ds    0h
+         lr    r1,r7               * Set word length
+         lr    r0,r6               * Set current pointer
+
+supp090  ds    0h
+         subr  (r15,r1),path=fast
+
+         title 'Return formatted message to caller'
+*      *--------------------------------------------------------------*
+*      * Return formatted message to caller                           *
+*      *--------------------------------------------------------------*
+retmsg   sub   path=fast
+         l     r0,msrmsg           * Get return area address
+         l     r1,msrlen           * Get return area length
+         la    r14,wkmsg           * Get formatted message address
+         l     r15,wkcln           * Get formatted message length
+         icm   r15,8,=c' '         * Set pad
+         mvcl  r0,r14              * Copy message for caller
+
+retm090  ds    0h
+         subr  path=fast
+
+         title 'Convert a hex value to binary'
+*      *--------------------------------------------------------------*
+*      * Convert hexadecimal value to binary,                         *
+*      * r0 = length, r1 = address                                    *
+*      * Return: r15 = Rc, r0 = binary value                          *
+*      *--------------------------------------------------------------*
+hextobin sub   path=fast
+         xr    r2,r2               * Clear
+
+hext010  ds    0h
+         xr    r14,r14             * Clear for IC
+         ic    r14,0(,r1)          * Pick up value
+
+         cli   0(r1),c'9'          * > x'f9' ?
+         bh    hext080             * Yes, error
+         cli   0(r1),c'0'          * < x'f0' ?
+         bnl   hext030             * No, accumulate value
+
+         cli   0(r1),c'a'          * < x'a1' ?
+         bl    hext080             * Yes, error
+         cli   0(r1),c'f'          * > x'a6' ?
+         bnh   hext020             * No, convert !
+
+         cli   0(r1),c'A'          * < x'c1' ?
+         bl    hext080             * Yes, error
+         cli   0(r1),c'F'          * > x'c6' ?
+         bh    hext080             * Yes, error
+
+hext020  ds    0h
+         a     r14,=f'9'           * Convert low-order 1 -> f etc.
+
+hext030  ds    0h
+         n     r14,=x'0000000f'    * Lose all but low 4 bits
+         sll   r2,4                * Shift sideways
+         or    r2,r14              * OR in binary value
+         la    r1,1(,r1)           * Address next input character
+         bct   r0,hext010          * Loop if more characters
+
+         lr    r0,r2               * Copy binary value
+         la    r15,0(,0)           * Set Rc=0
+         b     hext090             * And return
+
+hext080  ds    0h
+         la    r15,4(,0)           * Set Rc=4
+
+hext090  ds    0h
+         subr  (r15,r1),path=fast,cc=yes   * And return
+
+         title 'Build && issue WTO as required'
+*      *--------------------------------------------------------------*
+*      * Issue message                                                *
+*      *--------------------------------------------------------------*
+consmsg  sub   ,
+         l     r2,wkcln            * Get message length
+         sth   r2,wkconl           * Copy message ...
+         bctr  r2,0                * ... to ...
+         mvc   wkcon(*-*),wkmsg    * * Executed * *
+         ex    r2,*-6              * ... wto parm area
+         la    r3,wkconl           * Address message
+
+         test  msf1lbr             * Use branch linkage?
+         bo    cons010             * Yes, skip
+
+         la    r0,wkwtop           * Address of wto parms in storage
+         l     r1,=a(mwtol)        * Length of wto skeleton
+         la    r14,mwtosk          * Address of wto skeleton
+         lr    r15,r1              * Copy length of wto skeleton
+         mvcl  r0,r14              * Copy wto skeleton to storage
+
+         wto   text=(r3),                                              +
+               mf=(E,wkwtop)
+
+         b     cons090             * Return
+
+cons010  ds    0h
+         la    r0,wkwtol           * Address of wto parms in storage
+         l     r1,=a(mwtoll)       * Length of wto skeleton
+         la    r14,mwtoskl         * Address of wto skeleton
+         lr    r15,r1              * Copy length of wto skeleton
+         mvcl  r0,r14              * Copy wto skeleton to storage
+
+         wto   text=(r3),                                              +
+               linkage=BRANCH,                                         +
+               mf=(E,wkwtol)
+
+cons090  ds    0h
+         subr  ,
+
+mwtosk   wto   text=(r0),mf=L      * Skeleton WTO Plist
+mwtol    equ   *-mwtosk            * Length of skeleton
+mwtoskl  wto   text=(r0),linkage=,mf=L  * Skeleton WTO Plist
+mwtoll   equ   *-mwtoskl           * Length of skeleton
+
+         title 'Edit number'
+*      *--------------------------------------------------------------*
+*      * Numedit:                                                     *
+*      *       Edit a number nicely from value in r0.                 *
+*      *       r1 = number of significant digits                      *
+*      *       On output r1 @ number                                  *
+*      *                 r0 = Length                                  *
+*      *--------------------------------------------------------------*
+numedit  sub   path=fast
+         cvd   r0,wkdwd            * Convert binary -> decimal
+         mvc   wkedit(16),=x'40202020202020202020202020202020'
+         la    r2,16(,0)           * Calculate ...
+         sr    r2,r1               * ... position ...
+         bctr  r2,0                * ... of ...
+         la    r1,wkedit(r2)       * ... significance starter
+         mvi   0(r1),x'21'         * Insert significance starter
+         la    r1,1(,r1)           * Preset start of significant ...
+*                                  * ... digits
+         edmk  wkedit(16),wkdwd    * Edit number
+         lr    r0,r1               * Copy position of 1st ...
+*                                  * ... significant digit
+         la    r3,wkedit           * Get start position
+         sr    r0,r3               * Calculate ...
+         a     r0,=a(-16)          * ... significant ...
+         lpr   r0,r0               * ... length
+
+         subr  (r0,r1),path=fast    * Return
+
+msgprtab dc    64c'.',186al1(*-msgprtab),6c'.'
+
+*      *--------------------------------------------------------------*
+*      * Rjust:                                                       *
+*      *       Right-justify data into output area                    *
+*      *       On input  r1 @ source                                  *
+*      *                 r0 = Length                                  *
+*      *                 r2 @ target                                  *
+*      *                 r3 = Length                                  *
+*      *--------------------------------------------------------------*
+rjust    sub
+         lr    r4,r0               * Source length
+         sr    r3,r0               * Calculate difference in length
+         la    r3,0(r3,r2)         * Calculate offset into target
+         bctr  r4,0                * Machine length
+         mvc   0(*-*,r3),0(r1)     * * Executed * *
+         ex    r4,*-6              * Copy source to target field
+
+         subr  ,                   * Return
+
+*      *--------------------------------------------------------------*
+*      * Sumedit:                                                     *
+*      *       Edit a number nicely as n,nnn,nnn,nnn,nnn from value   *
+*      *       in dwd                                                 *
+*      *       On output r1 @ number                                  *
+*      *                 r0 = Length                                  *
+*      *--------------------------------------------------------------*
+sumedit  sub
+         mvc   wkedit(20),=x'402020206b2020206b2020206b2020206b202120'
+         la    r1,wkedit+19        * Preset significant digit
+         edmk  wkedit(20),wkdwd    * Edit number
+         lr    r0,r1               * Copy position of 1st ...
+*                                  * ... significant digit
+         la    r3,wkedit           * Get start position
+         sr    r0,r3               * Caclulate ...
+         a     r0,=a(-20)          * ... significant ...
+         lpr   r0,r0               * ... length
+
+         subr  (r0,r1)             * Return
+
+*      *--------------------------------------------------------------*
+*      * Clearlin:                                                    *
+*      *       Clear out area for justification                       *
+*      *--------------------------------------------------------------*
+clearlin sub
+         la    r0,wkjst            * Address data
+         l     r1,=a(l'wkjst)      * Get data length
+         lr    r14,r0              * Copy data address
+         l     r15,=al1(c' ',0,0,0)    * Set to clear to x'40's
+         mvcl  r0,r14              * Clear to spaces
+
+         subr  ,                   * Return
+
+*      *--------------------------------------------------------------*
+*      * Dsects                                                       *
+*      *--------------------------------------------------------------*
+
+         zmsgr type=dsect          * Map message request
+         zmsg  type=dsect          * Map message table entry
+         regequ ,                  * Register equates
+         end   ,                   * C'est la!

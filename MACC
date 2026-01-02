@@ -1,0 +1,97 @@
+         MACRO
+         MACC  &offs,&op,&len,&pl,&wk,&man=yes
+.*     *--------------------------------------------------------------*
+.*     * macc - Build parameter list                                 *
+.*     *--------------------------------------------------------------*
+&plr     setc  '&pl'
+         aif   (t'&pl ne 'O').acc010
+&plr     setc  '1'
+
+.acc010  anop
+&wkr     setc  '&wk'
+         aif   (t'&wk ne 'O').acc020
+&wkr     setc  '14'
+
+.acc020  anop
+         aif   (t'&offs ne 'O').acc030
+         mnote 8,'macc - Missing parameter list offset'
+         mexit
+
+.acc030  anop
+         aif   (t'&op ne 'O').acc040
+&umn     setc  (upper '&man')
+         aif   ('&umn' eq 'YES').acc035
+         mexit
+
+.acc035  anop
+         mnote 8,'macc - Missing operand parameter'
+         mexit
+
+.acc040  anop
+         aif   (n'&op eq 2).acc200
+
+&uop     setc  (upper '&op')
+         aif   ('&uop'(1,1) eq '(').acc130,                            +
+               ('&uop'(1,3) eq '=A(').acc050,                          +
+               ('&uop'(1,3) eq '=V(').acc050,                          +
+               ('&uop'(1,4) eq '=AL4').acc050,                         +
+               ('&uop'(1,4) eq '=VL4').acc050,                         +
+               ('&uop'(1,5) eq '=XL4''').acc050,                       +
+               ('&uop'(1,4) eq '=AL3').acc060,                         +
+               ('&uop'(1,4) eq '=AL2').acc070,                         +
+               ('&uop'(1,3) eq '=Y(').acc070,                          +
+               ('&uop'(1,3) eq '=AL1').acc080,                         +
+               ('&uop'(1,5) eq '=CL1''').acc080
+         ago   .acc100
+
+.acc050  anop
+         mvc   &offs.(4,&plr),&op
+         mexit
+
+.acc060  anop
+         mvc   &offs.(3,&plr),&op
+         mexit
+
+.acc070  anop
+         mvc   &offs.(2,&plr),&op
+         mexit
+
+.acc080  anop
+         mvc   &offs.(1,&plr),&op
+         mexit
+
+.acc090  anop
+         mvc   &offs.(1,&plr),&op
+         mexit
+
+.acc100  anop
+         aif   (t'&len ne 'O').acc110
+         mnote 8,'macc - Missing parameter length'
+         mexit
+
+.acc110  anop
+         mvc   &offs.(&len,&plr),&op
+         mexit
+
+.acc120  anop
+         mexit
+
+.acc130  anop
+         aif   (&len ne 4).acc140
+         st    &op(1),&offs.(0,&plr)
+         mexit
+
+.acc140  anop
+         sth   &op(1),&offs.(0,&plr)
+         mexit
+
+.acc200  anop
+&uop     setc  (upper '&op(1)')
+         aif   ('&uop' eq 'S').acc210
+         mnote 8,'macc - Invalid parameter type (&uop,...'
+         mexit
+
+.acc210  anop
+         la    &wkr,&op(2)
+         st    &wkr,&offs.(0,&plr)
+         MEND

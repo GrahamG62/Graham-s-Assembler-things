@@ -1,0 +1,96 @@
+         MACRO
+         zmsg &num,&sev,&msg,&type=
+
+.*     *--------------------------------------------------------------*
+.*     * #msg  Build Message table entry                              *
+.*     *--------------------------------------------------------------*
+
+         gblc  &nxto               . Next message label
+
+         aif  (t'&type eq 'O').msg000
+&utyp    setc  (upper '&type')
+         aif   ('&utyp' eq 'DSECT').dct000,                            +
+               ('&utyp' eq 'END').end000
+         mnote 8,'Invalid request type &utyp'
+         mexit
+
+.*     *--------------------------------------------------------------*
+.*     * Preamble                                                     *
+.*     *--------------------------------------------------------------*
+.msg000  anop
+         aif   ('&nxto' ne '').msg010  . 1st message in table ?
+&labc    setc  '#mo&sysndx'            . Yes, initial label
+         ago   .msg020
+
+.msg010  anop
+&labc    setc  '&nxto'             . Get next label
+
+.msg020  anop
+&labn    setc '#mz&sysndx'         . Set new next label
+&nxto    setc '&labn'
+
+.*     *--------------------------------------------------------------*
+.*     * Message number & Severity                                    *
+.*     *--------------------------------------------------------------*
+         aif   (t'&num ne 'O').msg030
+         mnote 8,'Message number missing'
+         mexit
+
+.msg030  anop
+&n       seta  &num
+
+&s       setc  '&sev'
+         aif   (t'&sev ne 'O').msg040
+&s       setc  'I'
+
+.msg040  anop
+         aif   ('&msg'(1,1) eq '''').msg050
+         mnote 8,'#msg - message &msg invalid'
+         mexit
+
+.msg050  anop
+         aif   ('&msg'(k'&msg,1) eq '''').msg060
+         mnote 8,'#msg - message &msg invalid'
+         mexit
+
+.msg060  anop
+&kwrd    setc  '&msg'(2,k'&msg-2)      . Isolate msg
+&wlen    seta  k'&msg-2                . Get msg length
+&rlen    seta  ((&wlen+3)/4)*4         . Round up length to f'wrd
+&rfac    setc  'cl&rlen'               . Set dc info
+&f1(1)   setb  1                       . Show msg supplied
+
+.*     *--------------------------------------------------------------*
+.*     * Generate table entry                                         *
+.*     *--------------------------------------------------------------*
+         mnote *,'-------------------------------------------------- *'
+         mnote *,' Message &kwrd                                      '
+         mnote *,'-------------------------------------------------- *'
+&labc    dc    a(&labn)            * Address of next message
+         dc    al2(&wlen)          * Actual length of message
+         dc    al2(&n)             * Message number
+         dc    cl1'&s'             * Message severity
+         dc    cl3' '              * * Spare * *
+         dc    &rfac.&msg          * Message text
+         mexit
+
+.*     *--------------------------------------------------------------*
+.*     * Generate table terminating entry                             *
+.*     *--------------------------------------------------------------*
+.end000  anop
+&labc    setc  '&nxto'             . Get next label
+&labc    dc    a(0)                * Last entry in table
+         mexit
+
+.*     *--------------------------------------------------------------*
+.*     * Generate mapping Dsect                                       *
+.*     *--------------------------------------------------------------*
+.dct000  anop
+megent   dsect ,
+megnext  ds    al4                 * Next message in table
+meglen   ds    al2                 * Message length
+megnum   ds    al2                 * Message mumber
+megsev   ds    cl1                 * Message severity
+         ds    cl3                 * * spare * *
+megtxt   ds    0c                  * Message text
+         MEND

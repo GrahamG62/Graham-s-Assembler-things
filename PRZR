@@ -1,0 +1,55 @@
+         MACRO
+&label   PRZR  &req,                                                   +
+               &keytab=,                                               +
+               &proc=,                                                 +
+               &get=,                                                  +
+               &delim=,                                                +
+               &llev=,                                                 +
+               &mf=(E,(1))
+
+.*     *--------------------------------------------------------------*
+.*     * $przr (c) 2001, Caddis Systems Ltd.                          *
+.*     * Parser request                                               *
+.*     *                                                              *
+.*     * This macro is used to invoke the keyword parser CZLPAR.      *
+.*     *                                                              *
+.*     *--------------------------------------------------------------*
+
+&ureq    setc  (upper '&req')      . Convert request -> uppercase
+
+         aif   ('&ureq' eq 'DSECT').dsct000
+         aif   ('&ureq' eq 'PLIST').plst000
+
+.*     *--------------------------------------------------------------*
+.*     * Generate call to parser                                      *
+.*     *--------------------------------------------------------------*
+         maca  &mf,1               . Address Parmlist
+         macb  24,1                . Clear & initialise parmlist
+         macc  04+04,&keytab,4,1,14  . Set keytable address
+         macc  04+08,&get,4,1,14   . Set input routine address
+         macc  04+12,&delim,4,1,14,man=no . Set delimiter address
+         macc  04+16,&proc,4,1,14  . Set callback
+         maca  &mf,1               . Re-address Parmlist
+         zcall =v(czlpar)
+         mexit
+
+.*     *--------------------------------------------------------------*
+.*     * Define parameter list for CZLPRZ                             *
+.*     *--------------------------------------------------------------*
+.plst000 anop
+&plen    seta  4+20                . Parmlist length (bytes)
+&label   ds    0f
+         ds    xl&plen
+         mexit
+
+.dsct000 anop
+*      *--------------------------------------------------------------*
+*      * Map parameter list for parser request                        *
+*      *--------------------------------------------------------------*
+przr     dsect ,                   * Disassemble request
+         ds    al4        +0       * Standard request/length
+pzktab   ds    al4        +4       * Keyword table
+pzget    ds    al4        +8       * Get input routine address
+pzdlm    ds    al4        +12      * Delimit string address
+pzproc   ds    al4        +16      * Callback for processing
+         MEND

@@ -1,0 +1,4 @@
+         MACRO
+&lab     SET   &flag
+&lab     oi    &flag,l'&flag
+         MEND

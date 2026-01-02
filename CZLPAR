@@ -1,0 +1,1164 @@
+CZLPAR   title 'Keyword Parser'
+*      *--------------------------------------------------------------*
+*      * Parser                                                       *
+*      *                                                              *
+*      * (c) Caddis Systems Ltd 2001, All rights reserved             *
+*      * v1.000                                                       *
+*      *--------------------------------------------------------------*
+czlpar   rsect ,
+czlpar   amode 31                  * Use ALL the storage available
+czlpar   rmode any                 * Run anywhere!
+
+         stkr  get,base=r11
+{{
+pktab    ds    a                   * Keyword table address
+pwget    ds    a                   * Get input routine address
+pwinp    ds    a                   * Address of current input
+pwlen    ds    a                   * Length of current input
+pwproc   ds    a                   * Callback address for logical words
+pwerr    ds    a                   * Callback address for errors
+pdepth   ds    a                   * Recursion depth
+pwcnt    ds    a                   * No. input records read
+pdelm    ds    a                   * Delimiter string address
+comstr   ds    cl4                 * Comment string
+deltrt   ds    256x                * Translate table for delimiters
+pwrec    ds    cl256               * Area to return input record
+msgp     zmsgr type=plist,subs=13  * MSG Parameter list area
+}}
+         lae   r12,0(r15,0)        * Transfer base address
+         using czlpar,r12          * Make code addressable
+         b     main000             * Skip eye-catchers, etc.
+
+         cnop  0,4
+         eyec  ,                   * Eye-catchers
+         cnop  0,4
+
+*      *--------------------------------------------------------------*
+*      * Global mapping, etc...                                       *
+*      *--------------------------------------------------------------*
+kw       using keyw,r9             * Address keyword entry
+ko       using keyop,r9            * Address operand entry
+
+*      *--------------------------------------------------------------*
+*      * Initialise (not much) for parsing                            *
+*      *                                                              *
+*      * Parser works as follows:                                     *
+*      *   Input is converted to a stream of words, commas, etc.      *
+*      *   For each word or other character matched against the       *
+*      *   keyword table, various things happen. If a word or         *
+*      *   whatever is matched, the parser is called recursively and  *
+*      *   the process repeated for a new level of keyword.           *
+*      *--------------------------------------------------------------*
+main000  ds    0h
+         l     r1,0(,r1)           * Address input parms
+         using przr,r1             * Map input parms
+         mvc   pktab,pzktab        * Save keyword table address
+         mvc   pwget,pzget         * Save get input address
+         mvc   pdelm,pzdlm         * Save delimiter string address
+         mvc   pwproc,pzproc       * Save processor callback address
+         drop  r1                  * Drop input parms
+
+         xc    pwinp,pwinp         * Clear input address
+         xc    pwlen,pwlen         * Zeroise input length to force
+*                                  * initial drive of GET routine
+         xc    deltrt,deltrt       * Clear table to locate delimiters
+*        xc    ndltrt,ndltrt       * Clear table for non-delimiters
+         mvc   comstr,=c'/**/'     * Comment start/end
+
+         icm   r4,15,pdelm         * Got supplied delimiters ?
+         bnz   *+8                 * Yes, skip
+         la    r4,delmtc           * No, address defaults
+         lh    r0,0(,r4)           * Get no. delimiters
+         la    r1,2(,r4)           * Address delimiters
+         sr    r2,r2               * Clear for IC
+
+*      *--------------------------------------------------------------*
+*      * Loop through list of delimiters, adding them to translate    *
+*      * table. Ensure that blank (x'40') is one of them.             *
+*      *--------------------------------------------------------------*
+main010  ds    0h
+         ic    r2,0(,r1)           * Get delimiter
+         la    r3,deltrt(r2)       * Address table slot
+         mvc   0(1,r3),0(r1)       * Insert delimiter into table
+         la    r1,1(,r1)           * Bump to next delimiter
+         bct   r0,main010          * And loop
+
+         ic    r2,=c' '            * Ensure that blank is one of the
+*                                  * delimiters
+         la    r3,deltrt(r2)       * Address table slot
+         mvi   0(r3),c' '          * Insert blank into table
+
+main070  ds    0h
+         la    r1,pktab            * Address parms for parser
+         zcall =a(parse)           * Call Parse routine
+
+main090  ds    0h
+         stkr  free
+         ltr   r15,r15             * Set CC
+         br    r14                 * And return to caller
+
+*      *--------------------------------------------------------------*
+*      * Default delimiters used by parser.                           *
+*      * Can be overridden by those supplied by calling program.      *
+*      *--------------------------------------------------------------*
+delmtc   dc    al2(l'delim)        * Number of delimiters
+delim    dc    c',()''" ='         * Delimiters
+
+         cnop  0,4                 * Align
+         ltorg ,                   * Literals
+         cnop  0,4                 * Align
+         drop  r12                 * Drop routine base
+
+         title 'Parse input'
+*      *--------------------------------------------------------------*
+*      * The business end of the parser ...                           *
+*      * Called recursively                                           *
+*      *--------------------------------------------------------------*
+parse    sub  wkreg=r10
+{{
+         parb  type=nosect         * Parser control block
+pkey     ds    a                   * Root keyword at current level
+pget     ds    a                   * Get input routine address
+pinp     ds    a                   * Address of current input
+plen     ds    a                   * Length of current input
+psin     ds    a                   * Saved address of current input
+psln     ds    a                   * Saved length of current input
+prin     ds    a                   * Current position in re-assembly
+prln     ds    a                   * Current length in re-assembly
+prec     ds    cl256               * Re-assembled input
+pckey    ds    a                   * Keyword for next level
+pcget    ds    a                   * Get routine  "    "
+pcin     ds    a                   * Input address"    "
+pcln     ds    a                   * Input length "    "
+}}
+pl       using pktab,r1            * Map parameters
+         mvc   pkey,pl.pktab       * Save keyword root
+         mvc   pget,pl.pwget       * Save get routine address
+         mvc   pinp,pl.pwinp       * Save input address
+         mvc   plen,pl.pwlen       * Save input length
+         drop  pl                  * Drop parameters
+
+         l     r9,pkey             * Address keywords
+
+         l     r2,=f'1'            * Increment ...
+         a     r2,pdepth           * ... recursion ...
+         st    r2,pdepth           * ... depth
+         la    r14,prec            * Address re-assembly buffer
+         st    r14,prin            * Set as current address
+         mvc   prln,=a(l'prec)     * Set as current length
+
+*      *--------------------------------------------------------------*
+*      * Main loop for parsing input at current level                 *
+*      *--------------------------------------------------------------*
+pars000  ds    0h
+         xc    prtabe(prxlen),prtabe * Clear reusable areas
+         l     r1,pinp             * Get current input address
+         l     r0,plen             * Get current input length
+         zcall =a(getword)         * Get word from input
+         bz    pars000             * Keep running at this level !
+
+*      *--------------------------------------------------------------*
+*      * Current level terminated, return residual lengths etc.       *
+*      *--------------------------------------------------------------*
+         l     r1,pinp             * Get input address
+         l     r0,plen             * Get input length
+         l     r2,pdepth           * Decrement ...
+         bctr  r2,0                * ... recursion ...
+         st    r2,pdepth           * ... depth
+         c     r15,=f'4'           * Rc > 4 ?
+         bh    *+8                 * Yes, skip
+         la    r15,0(,0)           * No, set Rc=0
+
+pars090  ds    0h
+         subr  (r15,r1),cc=yes
+
+         title 'Isolate next word'
+*      *--------------------------------------------------------------*
+*      * Isolate next "word" from surrounding whitespace (throw in a  *
+*      * unix-type term, pretend this is cutting edge stuff!)         *
+*      *                                                              *
+*      * r1 @ Input                                                   *
+*      * r0 = Length                                                  *
+*      *--------------------------------------------------------------*
+getword  sub
+         ltr   r0,r0               * Got any input ?
+         bnz   getw000             * Yes, skip
+
+         zcall =a(input)           * No, get some
+         bnz   getw090             * None, return
+
+getw000  ds    0h
+         st    r1,psin             * Save current input pointer
+         st    r0,psln             * Save current input length
+         lr    r6,r1               * Copy address
+         lr    r7,r0               * Copy length
+         l     r2,=a(trnblk)       * Address non-blank table
+         zcall =a(trtl)            * Scan for non-blanks
+         bz    getw080             * Rc=0; End of Input
+
+*      *--------------------------------------------------------------*
+*      * Found start of word; update pointers and lengths             *
+*      *--------------------------------------------------------------*
+         lr    r4,r1               * Save start address of word
+         sr    r1,r6               * Calculate length skipped
+         lr    r6,r4               * Copy address
+         sr    r7,r1               * Calculate length remaining
+         st    r6,pinp             * Update input pointer
+         st    r7,plen             * Update input length
+         lr    r1,r6               * Copy Address of word start
+         lr    r0,r7               * Copy length of area
+
+*      *--------------------------------------------------------------*
+*      * Locate the end of the delimited "word"                       *
+*      *--------------------------------------------------------------*
+         la    r2,deltrt           * Address delimiter table
+         zcall =a(trtl)            * Scan for delimiters
+         bnz   getw010             * Rc<>0; Found blank or delimiter
+
+*      *--------------------------------------------------------------*
+*      * Reached end of input - assume word ends here!                *
+*      *--------------------------------------------------------------*
+         lr    r4,r6               * Start ...
+         alr   r4,r7               * Plus length = end address
+         lr    r0,r7               * Length = total length
+         lr    r1,r6               * Address = start address
+         xc    pinp,pinp           * Clear input address
+         xc    plen,plen           * Clear input length
+         xr    r1,r1               * Clear r1
+         xr    r0,r0               * Clear r0
+         la    r15,0(,0)           * Set Rc=0
+         b     getw090             * And return
+
+*      *--------------------------------------------------------------*
+*      * The scan was stopped be a delimit character. If it is not a  *
+*      * blank, pass it back as a "word".                             *
+*      *--------------------------------------------------------------*
+getw010  ds    0h
+         c     r2,=a(c' ')         * Delimited by blank ?
+         be    getw020             * Yes, skip
+         cr    r6,r1               * Same address as start ?
+         bne   getw020             * No, skip
+
+*      *--------------------------------------------------------------*
+*      * The 1st character scanned was another delimiter. Pass back   *
+*      *--------------------------------------------------------------*
+         l     r0,=f'1'            * Set length of delimiter
+         b     getw030             * And we're done !
+
+*      *--------------------------------------------------------------*
+*      * The "word" looks suspiciously like a genuine word.           *
+*      *--------------------------------------------------------------*
+getw020  ds    0h
+         lr    r4,r1               * Save End address of word
+         sr    r1,r6               * Calculate length of word
+         lr    r0,r1               * Set length of word
+         lr    r1,r6               * Set address of word
+
+*      *--------------------------------------------------------------*
+*      * Update input pointers and lengths                            *
+*      *--------------------------------------------------------------*
+getw030  ds    0h
+         l     r3,pinp             * Get input address
+         l     r4,plen             * Get input length
+         alr   r3,r0               * Update ...
+         st    r3,pinp             * ... input address
+         slr   r4,r0               * Update ...
+         st    r4,plen             * ... input length
+
+*      *--------------------------------------------------------------*
+*      * Call the next routine in the sequence                        *
+*      *--------------------------------------------------------------*
+         zcall =a(scan)            * Scan for special characters
+         b     getw090             * And return
+
+*      *--------------------------------------------------------------*
+*      * Nothing interesting detected in input, just clear pointers   *
+*      *--------------------------------------------------------------*
+getw080  ds    0h
+         xc    pinp,pinp           * Clear input address
+         xc    plen,plen           * Clear input length
+         xr    r1,r1               * Clear r1
+         xr    r0,r0               * Clear r0
+         la    r15,0(,0)           * Set Rc=0
+
+getw090  ds    0h
+         subr  (r15,r1),cc=yes     * Return to caller
+
+         title 'Match paired delimiters'
+*      *--------------------------------------------------------------*
+*      * Scan for paired delimiters                                   *
+*      *                                                              *
+*      * r1 @ Input                                                   *
+*      * r0 = Length                                                  *
+*      *--------------------------------------------------------------*
+scan     sub   ,
+         c     r0,=f'1'            * Is length = 1 ?
+         bh    scan030             * No, scan for word
+
+         lm    r14,r15,=a(scan090,paren)
+         cli   0(r1),c'('          * Parenthesis ?
+         ber   r15                 * Yes, search for parenthesis
+
+         lm    r14,r15,=a(scan020,quote)
+         cli   0(r1),c'"'          * Quote ?
+         ber   r15                 * Yes, search for quote!!
+
+         cli   0(r1),c''''         * Apostrophe ?
+         ber   r15                 * Yes, search for apostrophe!!
+
+         lm    r14,r15,=a(scan090,comment)
+         clc   0(1,r1),comstr      * Comment ?
+         ber   r15                 * Yes, search for comments!
+
+         b     scan030             * Treat all other delimiters as word
+
+scan020  ds    0h
+         bnz   scan090             * Scan for pair failed !!
+
+scan030  ds    0h
+         zcall =a(setpb)           * Set up parb
+         zcall =a(match)           * Match "word"
+
+scan090  ds    0h
+         subr  (r15,r1),cc=yes
+
+         title 'Set up PARB fields, part 1'
+*      *--------------------------------------------------------------*
+*      * Set up word in PARB                                          *
+*      *--------------------------------------------------------------*
+setpb    sub   ,
+         lr    r6,r1               * Copy word address
+         lr    r7,r0               * Copy word length
+         c     r7,=a(l'prword)     * Will word fit ?
+         bnh   *+8                 * Yes, skip
+         l     r7,=a(l'prword)     * No, truncate
+         st    r7,prwlen           * Set word length
+         mvc   prlvl,kw.kwlvl      * Get current keyword level
+         la    r14,prword          * Address area to move to
+         lr    r15,r7              * Copy length
+         mvcl  r14,r6              * Copy word
+         mvc   pruwrd,prword       * Copy for upper-case
+         tr    pruwrd,trucase      * Translate upper-case version
+
+setp090  ds    0h
+         subr  ,
+
+         title 'Match word agin keywords'
+*      *--------------------------------------------------------------*
+*      * Match against keywords                                       *
+*      *                                                              *
+*      * r1 @ Input                                                   *
+*      * r0 = Length                                                  *
+*      *--------------------------------------------------------------*
+match    sub   ,
+
+*      *--------------------------------------------------------------*
+*      * Compare word against current entry in table.                 *
+*      *--------------------------------------------------------------*
+matc000  ds    0h
+         test  kw.kwend            * Is this end of keywords ?
+         bo    matc040             * Yes, keyword not found
+
+         test  kw.kwf1wd           * Word supplied ?
+         bno   matc010             * No, go match or process operands
+
+         la    r0,pruwrd           * Get word address
+         l     r1,prwlen           * Get word length
+         la    r14,kw.kwword       * Address keyword
+         sr    r15,r15             * Clear for IC
+         ic    r15,kw.kwmin        * Get keyword length
+         clcl  r0,r14              * Matching keyword ?
+         be    matc030             * Yes, go process
+
+         icm   r9,15,kw.kwnxt      * Get next keyword at this level
+         b     matc000             * And loop !
+
+*      *--------------------------------------------------------------*
+*      * If there is no word provided in this table entry, go scan    *
+*      * for operands                                                 *
+*      *--------------------------------------------------------------*
+matc010  ds    0h
+         st    r9,prtabe           * Set table entry
+         test  kw.kwf1mo           * Multiple operands allowed ?
+         bno   matc020             * No, simple process
+
+*      *--------------------------------------------------------------*
+*      * If the multiple operand flag is set to Y for this keyword    *
+*      * then we will treat the input as an operand UNLESS it is also *
+*      * valid as a keyword at a lower level, in which case we will   *
+*      * terminate this level and re-process the input.               *
+*      *--------------------------------------------------------------*
+         zcall =a(keyscan)         * Scan at higher level
+         bz    matc050             * Match found, process lower
+
+matc020  ds    0h
+         zcall =a(opernds)         * Go process operands !
+
+*      *--------------------------------------------------------------*
+*      * Keyword match, go process                                    *
+*      *--------------------------------------------------------------*
+matc030  ds    0h
+         st    r9,prtabe           * Set table entry
+*        zcall =a(msg13)
+         zcall =a(process)         * Process keyword
+         b     matc090             * And return
+
+*      *--------------------------------------------------------------*
+*      * If no match was found at this level, try matching the        *
+*      * keyword at a higher level (which counts as end of this level)*
+*      *--------------------------------------------------------------*
+matc040  ds    0h
+         zcall =a(keyscan)         * Scan at higher level
+         bnz   matc080             * Not found, error
+
+matc050  ds    0h
+         l     r1,psin             * Restore input pointer
+         l     r0,psln             * Restore input length
+         st    r1,pinp             * Restore input pointer
+         st    r0,plen             * Restore input length
+         la    r15,4(,0)           * Set Rc=4 to terminate this level
+         b     matc090             * And return
+
+*      *--------------------------------------------------------------*
+*      * Keyword not found - report error via callback                *
+*      *--------------------------------------------------------------*
+matc080  ds    0h
+         set   prfker              * Indicate keyword error
+         icm   r15,15,pwerr        * Got Callback address ?
+         bnz   *+8                 * Yes, skip
+         l     r15,=a(keyerror)    * No, use our default routine
+         zcall (r15)               * Call it !
+
+matc090  ds    0h
+         subr  (r15,r1),cc=yes
+
+*      *--------------------------------------------------------------*
+*      * Go process...                                                *
+*      *--------------------------------------------------------------*
+process  sub   ,
+         mvi   prflg1,l'prfpre     * Set flag to preprocess
+         zcall pwproc              * Call processor
+         zcall =a(getkeyw)         * Scan for higher level keyword
+         bnz   proc010             * None, do not recurse!
+
+         st    r1,pckey            * Save new keyword root
+         mvc   pcget,pget          * Save get routine address
+         mvc   pcin,pinp           * Save input address
+         mvc   pcln,plen           * Save input length
+         la    r1,pckey            * Address stuff
+         zcall =a(parse)           * Re-drive parser
+         st    r1,pinp             * Update input address
+         st    r0,plen             * Update input length
+         lr    r4,r15              * Save r15
+         mvi   prflg1,l'prfpst     * Set flag to postprocess
+         zcall pwproc              * Call processor
+         lr    r15,r4              * Restore r15
+         l     r1,pinp             * Set input address
+         l     r0,plen             * Set input length
+         c     r15,=f'4'           * Rc > 4 ?
+         bh    proc090             * Yes, return
+
+         test  kw.kwf1wd           * Word supplied ?
+         bo    proc090             * Yes, return
+
+         la    r15,4(,0)           * No, force this level to terminate
+         b     proc090             * And we're done !
+
+proc010  ds    0h
+         mvi   prflg1,l'prfpst     * Set flag to postprocess
+         zcall pwproc              * Call processor
+         l     r1,pinp             * Set input address
+         l     r0,plen             * Set input length
+         la    r15,4(,0)           * Set Rc=4, terminate this level
+         test  kw.kwf1mo           * Multiple operands ?
+         bno   *+8                 * No, skip
+         la    r15,0(,0)           * Set Rc=0, remain at this level
+
+proc090  ds    0h
+         subr  (r15,r1),cc=yes
+
+*      *--------------------------------------------------------------*
+*      * Check for keywords at a higher level than the current one    *
+*      *--------------------------------------------------------------*
+getkeyw  sub
+         xr    r2,r2               * Clear for ICM
+         icm   r2,3,kw.kwelen      * Get entry length
+         alr   r9,r2               * Bump to next entry
+
+getk000  ds    0h
+         test  kw.kwkey            * Is it a keyword ?
+         bno   getk010             * No, check for operands
+
+         clc   prlvl,kw.kwlvl      * Is it at higher level ?
+         bh    getk080             * No, no higher keywords !
+
+         lr    r1,r9               * Yes, set address
+         la    r15,0(,0)           * Set Rc=0
+         b     getk090             * And return
+
+getk010  ds    0h
+         test  ko.koend            * End of operands flag ?
+         bno   getk020             * No, skip
+
+         la    r9,1(,r9)           * Yes, skip end-of-operands byte
+         b     getk000             * And try next table entry
+
+getk020  ds    0h
+         test  ko.koop             * Is this an operand ?
+         bno   getk080             * No, must be end-of-keyword
+
+         xr    r2,r2               * Clear for ICM
+         icm   r2,3,ko.koelen      * Get entry length
+         alr   r9,r2               * Bump to next entry
+         b     getk000             * And loop
+
+getk080  ds    0h
+         la    r15,4(,0)           * Set Rc=4
+
+getk090  ds    0h
+         subr  r15,r1,cc=yes
+
+         title 'Get input from wherever'
+*      *--------------------------------------------------------------*
+*      * Get input, as required...                                    *
+*      *                                                              *
+*      * Returns                                                      *
+*      * r1 @ Input                                                   *
+*      * r0 = Length                                                  *
+*      *--------------------------------------------------------------*
+input    sub   ,
+         icm   r15,15,pget         * Get input routine address
+         bz    inpu080             * None, just return no more ...
+
+inpu000  ds    0h
+         la    r0,l'pwrec          * Get area length
+         la    r1,pwrec            * Get area address
+         zcall pget                * Get more input
+         bnz   inpu080             * Rc<>0; Return
+
+         l     r3,=f'1'            * Update ...
+         al    r3,pwcnt            * ... input ...
+         st    r3,pwcnt            * ... count
+         cli   0(r1),c'*'          * Comment ?
+         be    inpu000             * Yes, get more input
+
+         st    r1,pinp             * Save address
+         st    r0,plen             * Save length
+         la    r15,0(,0)           * Set Rc=0
+         b     inpu090             * And return
+
+*      *--------------------------------------------------------------*
+*      * Reached end of input, clear pointers & lengths               *
+*      *--------------------------------------------------------------*
+inpu080  ds    0h
+         xc    pinp,pinp           * Clear input address
+         xc    plen,plen           * Clear input length
+         xr    r1,r1               * Clear r1
+         xr    r0,r0               * Clear r0
+         la    r15,8(,0)           * Set Rc=8
+
+inpu090  ds    0h
+         subr  (r15,r1),cc=yes
+
+*      *--------------------------------------------------------------*
+*      * The handling of words which are not matched at a given level *
+*      * is subject to a little ambiguity. We have two choices here:  *
+*      * we can allow the scan to percolate back down the levels by   *
+*      * forcing an end-of-level signal for each unrecognised word,   *
+*      * thus only detecting errors back at level 1, or we can scan   *
+*      * here for matching words at lower levels, and only force      *
+*      * end-of-level if a word does match a keyword at a lower level.*
+*      * I think that the second option is preferable, since it       *
+*      * allows us to reject spurious input only without rejecting    *
+*      * all words not matched at level 1.                            *
+*      *--------------------------------------------------------------*
+keyscan  sub   ,
+         l     r9,pkey             * Readdress keyword root
+
+keys000  ds    0h
+         icm   r9,15,kw.kwroot     * Got root keyword at prev level?
+         bz    keys080             * No, word not matched !
+
+         lr    r4,r9               * Yes, copy root address
+
+keys010  ds    0h
+         test  kw.kwend            * Is this end of keywords ?
+         bo    keys020             * Yes, keyword not found
+
+         test  kw.kwf1wd           * Word supplied ?
+         bno   keys020             * No, don't include in scan
+
+         la    r0,pruwrd           * Get word address
+         l     r1,prwlen           * Get word length
+         la    r14,kw.kwword       * Address keyword
+         sr    r15,r15             * Clear for IC
+         ic    r15,kw.kwmin        * Get keyword length
+         clcl  r0,r14              * Matching keyword ?
+         be    keys030             * Yes, go process
+
+         icm   r9,15,kw.kwnxt      * Get next keyword at this level
+         b     keys010             * And loop !
+
+keys020  ds    0h
+         lr    r9,r4               * Restore root address
+         b     keys000             * And scan previous level
+
+keys030  ds    0h
+         la    r15,0(,0)           * Set Rc=0
+         b     keys090             * And return
+
+keys080  ds    0h
+         la    r15,4(,0)           * Set Rc=4
+
+keys090  ds    0h
+         subr  r15,cc=yes
+
+*      *--------------------------------------------------------------*
+*      * Error message for unrecognised keyword                       *
+*      *--------------------------------------------------------------*
+keyerror sub   ,
+         la    r3,=c'keyword'
+         test  prfker              * Keyword in error ?
+         bo    *+8                 * Yes, skip
+         la    r3,=c'operand'      * Set operand in error
+         l     r2,prwlen           * Get Word length
+         zmsgr ((r3),c,7),                                             +
+               (pruwrd,c,(r2)),                                        +
+               (pwcnt,f,4),                                            +
+               skel=(s,keyemsg),                                       +
+               sklen==y(l'keyemsg),                                    +
+               supress=yes,                                            +
+               out=yes,                                                +
+               mf=(e,msgp)
+
+         la    r15,0(,0)
+         subr  r15
+
+keyemsg  dc    c'CZLPAR0001W Unrecognised @0 @1 found in line @2'
+
+         title 'Process a string in Quotes'
+*      *--------------------------------------------------------------*
+*      * Process a string in quotes, either apostrophe or quotation   *
+*      *--------------------------------------------------------------*
+quote    sub   ,
+{{
+qtarg    ds    cl1                 * Character to search for
+qflag    ds    xl1                 * Flag
+qconc    equ   qflag,x'80'         *   Concatenate
+qappd    equ   qflag,x'40'         *   Append
+}}
+         mvc   qtarg,0(r1)         * Set character to search for
+         sr    r2,r2               * Initialise length
+         la    r6,prec             * Address build area
+         l     r8,plen             * Get input length
+         l     r3,pinp             * Address input (Index)
+         la    r4,1(,0)            * Length        (Increment)
+         l     r5,plen             * Calculate ...
+         la    r5,0(r5,r3)         * ...
+         bctr  r5,0                * ... End-1     (Limit)
+
+*      *--------------------------------------------------------------*
+*      * Loop through input looking for matching quote/apostrophe     *
+*      *--------------------------------------------------------------*
+quot000  ds    0h
+         c     r2,=a(l'prec)       * Have we run out of re-assembly ?
+         bh    quot070             * Yes, error !
+
+         clc   0(1,r3),qtarg       * Matched target ?
+         be    quot050             * Yes, finished !
+
+         cli   0(r3),c'|'          * Concatenate ?
+         bne   quot010             * No, skip
+
+         set   qconc               * Indicate concatenate
+         b     quot040             * Onwards
+
+quot010  ds    0h
+         cli   0(r3),c'+'          * Append ?
+         bne   quot020             * No, skip
+
+         set   qappd               * Indicate append
+         mvi   0(r6),c' '          * Move in blank
+         la    r6,1(,r6)           * Bump output pointer
+         la    r2,1(,r2)           * Bump output length
+         b     quot040             * Onwards
+
+quot020  ds    0h
+         cli   0(r3),c' '          * Blank character ?
+         bne   quot030             * No, skip
+
+         tm    qflag,l'qconc+l'qappd * Already concatenated or appended
+         bnz   quot040             * Yes, skip blanks !
+
+quot030  ds    0h
+         mvc   0(1,r6),0(r3)       * Copy input to re-assemble area
+         la    r6,1(,r6)           * Bump output pointer
+         la    r2,1(,r2)           * Bump output length
+         clear qconc               * Clear concat indicator
+         clear qappd               * Clear append indicator
+
+quot040  ds    0h
+         bctr  r8,0                * Decrement input length
+         bxle  r3,r4,quot000       * Loop for next input
+
+*      *--------------------------------------------------------------*
+*      * This line of input has run out.                              *
+*      *--------------------------------------------------------------*
+         zcall =a(input)           * Get more input
+         bnz   quot080             * None, unmatched quote !
+
+         lr    r3,r1               * Address input (Index)
+         la    r4,1(,0)            * Length        (Increment)
+         lr    r8,r0               * Get input length
+         lr    r5,r0               * Calculate ...
+         la    r5,0(r5,r3)         * ...
+         bctr  r5,0                * ... End-1     (Limit)
+         b     quot000             * And keep searching
+
+*      *--------------------------------------------------------------*
+*      * Matching quote/apostrophe found                              *
+*      *--------------------------------------------------------------*
+quot050  ds    0h
+         st    r2,prln             * Set length of re-assembled "word"
+         la    r3,1(,r3)           * Bump to skip trailing quote....
+         st    r3,pinp             * Set address to restart scan
+         bctr  r8,0                * Less 1 for trailing quote ...
+         st    r8,plen             * Set length remaining
+         la    r1,prec             * Set "word" address
+         l     r0,prln             * Set "word" length
+         la    r15,0(,0)           * Set Rc=0
+         b     quot090             * And we're done"!
+
+*      *--------------------------------------------------------------*
+*      * Quoted string exceeds ... characters                         *
+*      *--------------------------------------------------------------*
+quot070  ds    0h
+         l     r2,=al4(l'prec)
+         zmsgr (pwcnt,f,4),                                            +
+               (r2),                                                   +
+               skel=(s,quotmg1),                                       +
+               sklen==y(l'quotmg1),                                    +
+               supress=yes,                                            +
+               out=yes,                                                +
+               mf=(e,msgp)
+
+         la    r3,1(,r3)           * Bump to next character
+         bctr  r8,0                * Less 1 ...
+         st    r3,pinp             * Set address to restart scan
+         st    r8,plen             * Set length remaining
+         l     r1,pinp             * Set r1
+         l     r0,plen             * Set r0
+         la    r15,4(,0)
+         b     quot090
+
+*      *--------------------------------------------------------------*
+*      * No matching quote/apostrophe found.                          *
+*      *--------------------------------------------------------------*
+quot080  ds    0h
+         zmsgr (qtarg,c,1),                                            +
+               (pwcnt,f,4),                                            +
+               skel=(s,quotmg2),                                       +
+               sklen==y(l'quotmg2),                                    +
+               supress=yes,                                            +
+               out=yes,                                                +
+               mf=(e,msgp)
+
+         xc    pinp,pinp           * Clear input address
+         xc    plen,plen           * Clear input length
+         xr    r1,r1               * Clear r1
+         xr    r0,r0               * Clear r0
+         la    r15,8(,0)           * Set Rc=8
+
+quot090  ds    0h
+         subr  (r15,r1),cc=yes
+
+quotmg1  dc    c'CZLPAR0002W Quoted string near line @0 exceeds @1 char+
+               acters'
+quotmg2  dc    c'CZLPAR0003W Umatched ''@0'' at or near line @1'
+
+         title 'Process strings in Parenthesis'
+*      *--------------------------------------------------------------*
+*      * This routine matches and balances strings in parenthesis.    *
+*      * As a parenthesis pair is balanced, the parser is called      *
+*      * recursively to process the contents.                         *
+*      *--------------------------------------------------------------*
+paren    sub   ,
+{{
+ptcnt    ds    f                   * Nesting count !
+}}
+         sr    r2,r2               * Initialise length
+         la    r6,prec             * Address build area
+         l     r8,plen             * Get input length
+         l     r3,pinp             * Address input (Index)
+         la    r4,1(,0)            * Length        (Increment)
+         l     r5,plen             * Calculate ...
+         la    r5,0(r5,r3)         * ...
+         bctr  r5,0                * ... End-1     (Limit)
+
+*      *--------------------------------------------------------------*
+*      * Loop through input looking for matching parentheses          *
+*      *--------------------------------------------------------------*
+pare000  ds    0h
+         c     r2,=a(l'prec)       * Have we run out of re-assembly ?
+         bh    pare070             * Yes, error !
+
+         cli   0(r3),c'('          * Another left parenthesis ?
+         bne   pare010             * Nope, skip !
+
+         l     r9,ptcnt            * Yes, ...
+         la    r9,1(,r9)           * ... increment ...
+         st    r9,ptcnt            * ... count
+         b     pare020             * Onwards
+
+pare010  ds    0h
+         cli   0(r3),c')'          * Right parenthesis ?
+         bne   pare020             * No, add to output
+
+         clc   ptcnt,=f'0'         * Balance count = 0 ?
+         be    pare030             * Yes, end parenthesis found!
+
+         l     r9,ptcnt            * Get balance count
+         bctr  r9,0                * Decrement
+         ltr   r9,r9               * Check !
+         bm    pare060             * Unbalanced parenthesis !
+
+         st    r9,ptcnt            * Update balance count
+
+pare020  ds    0h
+         mvc   0(1,r6),0(r3)       * Copy input to re-assemble area
+         la    r2,1(,r2)           * Bump output length
+         la    r6,1(,r6)           * Bump output pointer
+         bctr  r8,0                * Decrement input length
+         bxle  r3,r4,pare000       * Loop for next input
+
+         xc    pinp,pinp           * Clear input address
+         xc    plen,plen           * Clear input length
+         zcall =a(input)           * Get more input
+         bnz   pare080             * No more input, error !
+
+         lr    r3,r1               * Address input (Index)
+         la    r4,1(,0)            * Length        (Increment)
+         lr    r8,r0               * Get input length
+         lr    r5,r0               * Calculate ...
+         la    r5,0(r5,r3)         * ...
+         bctr  r5,0                * ... End-1     (Limit)
+         b     pare000             * And keep searching
+
+*      *--------------------------------------------------------------*
+*      * Matching parenthesis found                                   *
+*      *--------------------------------------------------------------*
+pare030  ds    0h
+         st    r2,prln             * Set length of re-assembled "word"
+         la    r3,1(,r3)           * Bump to skip trailing parenthesis
+         st    r3,pinp             * Set address to restart scan
+         bctr  r8,0                * Less 1 for trailing parenthesis
+         st    r8,plen             * Set length remaining
+
+*      *--------------------------------------------------------------*
+*      * Re-drive parser to process rebuilt "word"                    *
+*      *--------------------------------------------------------------*
+         mvc   pckey,pkey          * Save keyword root
+         mvc   pcget,=f'0'         * Save get routine address
+         la    r14,prec            * Address rebuilt input
+         st    r14,pcin            * Save input address
+         mvc   pcln,prln           * Save input length
+         la    r1,pckey            * Address stuff
+         zcall =a(parse)           * Re-drive parser
+
+         la    r1,prec             * Set "word" address
+         l     r0,prln             * Set "word" length
+         la    r15,0(,0)           * Set Rc=0
+         b     pare090             * And we're done"!
+
+pare060  ds    0h
+         xc    pinp,pinp           * Clear input address
+         xc    plen,plen           * Clear input length
+         la    r15,4(,0)           * Set Rc=4
+
+pare070  ds    0h
+         l     r2,=al4(l'prec)
+         zmsgr (pwcnt,f,4),                                            +
+               (r2),                                                   +
+               skel=(s,paremg1),                                       +
+               sklen==y(l'paremg1),                                    +
+               supress=yes,                                            +
+               out=yes,                                                +
+               mf=(e,msgp)
+
+         st    r3,pinp             * Set address to restart scan
+         st    r8,plen             * Set length remaining
+         l     r1,pinp             * Set r1
+         l     r0,plen             * Set r0
+         la    r15,4(,0)           * Set Rc=4
+         b     pare090             * And return
+
+pare080  ds    0h
+         zmsgr (pwcnt,f,4),                                            +
+               skel=(s,paremg2),                                       +
+               sklen==y(l'paremg2),                                    +
+               supress=yes,                                            +
+               out=yes,                                                +
+               mf=(e,msgp)
+
+         xc    pinp,pinp           * Clear input address
+         xc    plen,plen           * Clear input length
+         xr    r1,r1               * Clear r1
+         xr    r0,r0               * Clear r0
+         la    r15,8(,0)           * Set Rc=8
+
+pare090  ds    0h
+         subr  (r15,r1),cc=yes
+
+paremg1  dc    c'CZLPAR0004W Parenthesis near line @0 exceeds @1 charac+
+               ters'
+paremg2  dc    c'CZLPAR0005W Unbalanced parenthesis at or near line @0'
+
+*      *--------------------------------------------------------------*
+*      * Process comments                                             *
+*      *--------------------------------------------------------------*
+comment  sub   ,
+{{
+commst   ds    f                   * Comment start line
+}}
+         mvc   commst,pwcnt        * Remember start line
+         la    r15,0(,0)           * Preset Rc=0
+         clc   plen,=f'1'          * At one other character ?
+         bl    comm090             * Nope, can't be comment!
+
+         l     r8,plen             * Get input length
+         l     r3,pinp             * Address input (Index)
+         clc   0(1,r3),comstr+1    * Matches start-of-comment ?
+         bne   comm090             * Nope, can't be comment /
+
+         la    r4,1(,0)            * Length        (Increment)
+         l     r5,plen             * Calculate ...
+         la    r5,0(r5,r3)         * ...
+         bctr  r5,0                * ... End-1     (Limit)
+
+*      *--------------------------------------------------------------*
+*      * Loop through input looking for matching end of comment       *
+*      *--------------------------------------------------------------*
+comm000  ds    0h
+         c     r8,=f'2'            * At least 2 characters ?
+         bl    comm010             * No, not interesting !
+
+         clc   0(2,r3),comstr+2    * End of comments ?
+         be    comm020             * Yes, tidy up !
+
+comm010  ds    0h
+         bctr  r8,0                * Decrement input length
+         bxle  r3,r4,comm000       * Loop for next input
+
+         xc    pinp,pinp           * Clear input address
+         xc    plen,plen           * Clear input length
+         zcall =a(input)           * Get more input
+         bnz   comm080             * No more input, error !
+
+         lr    r3,r1               * Address input (Index)
+         la    r4,1(,0)            * Length        (Increment)
+         lr    r8,r0               * Get input length
+         lr    r5,r0               * Calculate ...
+         la    r5,0(r5,r3)         * ...
+         bctr  r5,0                * ... End-1     (Limit)
+         b     comm000             * And keep searching
+
+*      *--------------------------------------------------------------*
+*      * Matching end-of-comment found                                *
+*      *--------------------------------------------------------------*
+comm020  ds    0h
+         la    r3,2(,r3)           * Bump to skip end
+         st    r3,pinp             * Set address to restart scan
+         bctr  r8,0                * Less 2 ...
+         bctr  r8,0                * ... for trailing end-of-comment
+         st    r8,plen             * Set length remaining
+         l     r1,pinp             * Set r1
+         l     r0,plen             * Set r0
+         la    r15,0(,0)           * Set Rc=0
+         b     comm090             * And we're done"!
+
+*      *--------------------------------------------------------------*
+*      * Unmatched comment string                                     *
+*      *--------------------------------------------------------------*
+comm080  ds    0h
+         zmsgr (commst,f,4),                                           +
+               skel=(s,commmg1),                                       +
+               sklen==y(l'commmg1),                                    +
+               supress=yes,                                            +
+               out=yes,                                                +
+               mf=(e,msgp)
+
+         xc    pinp,pinp           * Clear input address
+         xc    plen,plen           * Clear input length
+         xr    r1,r1               * Clear r1
+         xr    r0,r0               * Clear r0
+         la    r15,8(,0)           * Set Rc=8
+
+comm090  ds    0h
+         subr  (r15,r1),cc=yes
+
+commmg1  dc    c'CZLPAR0006W Unmatched comment at or near line @0'
+
+         title 'Scan and otherwise process any operands'
+*      *--------------------------------------------------------------*
+*      * Scan for operands associated with this keyword (if any)      *
+*      *--------------------------------------------------------------*
+opernds  sub   ,
+         xr    r2,r2               * Clear for ICM
+         icm   r2,3,kw.kwelen      * Get entry length
+         alr   r9,r2               * Bump to operands
+         test  ko.koop             * Is it an operand ?
+         bno   oper090             * No, just return
+
+oper000  ds    0h
+         test  ko.koend            * End of operands ?
+         bo    oper080             * Yes, operand is in error!
+
+         test  ko.kof1wd           * Word supplied ?
+         bno   oper020             * No, operand is not fixed
+
+         la    r0,pruwrd           * Get word address
+         l     r1,prwlen           * Get word length
+         la    r14,ko.koword       * Address keyword
+         sr    r15,r15             * Clear for IC
+         ic    r15,ko.komin        * Get keyword length
+         clcl  r0,r14              * Matching keyword ?
+         be    oper030             * Yes, go process
+
+         icm   r9,15,ko.konxt      * Get next keyword at this level
+         b     oper000             * And loop !
+
+oper020  ds    0h
+         st    r9,prtabo           * Save operand entry
+         zcall =v(czlopd)          * Go vet operand etc. etc.
+         b     oper090             * And return
+
+oper030  ds    0h
+         st    r9,prtabo           * Save operand entry
+         mvc   provct,ko.kovect    * Copy operand vector
+*        zcall =a(msg15)           * Trace message
+         b     oper090             * And return
+
+*      *--------------------------------------------------------------*
+*      * Operand error - report via callback                          *
+*      *--------------------------------------------------------------*
+oper080  ds    0h
+         set   prfoer              * Show operand error
+         icm   r15,15,pwerr        * Got Callback address ?
+         bnz   *+8                 * Yes, skip
+         l     r15,=a(keyerror)    * No, use our default routine
+         zcall (r15)               * Call it !
+
+oper090  ds    0h
+         subr  r15
+
+         title 'Translate and test (long)'
+*      *--------------------------------------------------------------*
+*      * Translate and test (long version)                            *
+*      * Returns as per usual TRT                                     *
+*      *                                                              *
+*      * Input                                                        *
+*      * r2 @ Translate table                                         *
+*      * r1 @ Input                                                   *
+*      * r0 = Length                                                  *
+*      *                                                              *
+*      * Output                                                       *
+*      * r2 = Character which stopped translate (bits 24-32) or x'00' *
+*      * r1 @ Input or character which stopped translate              *
+*      * r0 = Length of input                                         *
+*      * r15  0 if translate not stopped, or 4 if it did!             *
+*      *--------------------------------------------------------------*
+trtl     sub   path=fast
+         lr    r5,r2               * Copy Table address
+         lr    r6,r1               * Copy address
+         lr    r7,r0               * Copy length
+         sr    r2,r2               * Clear r2
+
+trtl010  ds    0h
+         lr    r3,r7               * Copy length
+         lr    r4,r6               * Copy Address
+         c     r7,=f'256'          * Got > 256 bytes ?
+         bnh   trtl020             * No, use provided length
+
+         l     r3,=f'256'          * Yes, set length
+
+trtl020  ds    0h
+         bctr  r3,0                * Decrement
+         trt   0(*-*,r4),0(r5)     * * Executed * *
+         ex    r3,*-6              * Scan for characters
+         bnz   trtl030             * TRT stopped by target
+
+         la    r3,1(,r3)           * Correct length
+         ar    r6,r3               * Increment input address
+         sr    r7,r3               * Subtract from input length
+         bp    trtl010             * Loop if more input
+
+         la    r15,0(,0)           * Target not found, set Rc=0
+         b     trtl090             * And return
+
+trtl030  ds    0h
+         la   r15,4(,0)            * Set Rc=4; target found
+
+trtl090  ds    0h
+         subr  (r15,r2),cc=yes,path=fast * Return to caller
+
+         title 'Translate Tables'
+*      *--------------------------------------------------------------*
+*      * Translate Tables                                             *
+*      *--------------------------------------------------------------*
+trucase  dc    256al1(*-trucase)   * Table to upper-case stuff
+         org   trucase+c'a'
+         dc    c'ABCDEFGHI'
+         org   trucase+c'j'
+         dc    c'JKLMNOPQR'
+         org   trucase+c's'
+         dc    c'STUVWXYZ'
+         org   ,
+
+trnblk   dc    256x'ff'            * Table to locate non-blanks
+         org   trnblk+c' '
+         dc    x'00'
+         org   ,
+
+         title 'Sundry debug messages'
+*      *--------------------------------------------------------------*
+*      * Sundry debug messages                                        *
+*      *--------------------------------------------------------------*
+msg13    sub   ,
+         l     r2,prwlen           * Get length
+
+         zmsgr (pruwrd,c,(r2)),                                        +
+               (pdepth,f,4),                                           +
+               skel=(s,msgd),                                          +
+               sklen==y(l'msgd),                                       +
+               supress=no,                                             +
+               out=yes,                                                +
+               mf=(e,msgp)
+         subr  ,
+
+msgd     dc    c'Matched @0 at level @1'
+
+msg15    sub   ,
+         l     r2,prwlen           * Get length
+         xr    r0,r0               * Clear
+         ic    r0,provct           * Get vector
+
+         zmsgr (pruwrd,c,(r2)),                                        +
+               (pdepth,f,4),                                           +
+               (r0),                                                   +
+               skel=(s,msgh),                                          +
+               sklen==y(l'msgh),                                       +
+               supress=no,                                             +
+               out=yes,                                                +
+               mf=(e,msgp)
+         subr  ,
+
+msgh     dc    c'Matched operand @0, vector @1'
+
+         title 'Mappings, other peoples'' and mine'
+         keyw  dsect               * Mapping keyword table entry
+         keyop dsect               * Mapping operand table entry
+         przr  dsect               * Mapping for Input parms
+         fscbd                     * Map FSCB
+         fstd                      * Map FST
+         regequ ,                  * Register equates
+         end   ,

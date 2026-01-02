@@ -1,0 +1,51 @@
+         MACRO
+         MACE  &op,&bs
+.*
+.*       MACE allows the storage of various register values into
+.*       a standard 72 byte savearea for the purpose of retaining
+.*       values on return to a calling program
+.*
+         aif   (t'&op ne 'O').mace010
+         mexit
+
+.mace010 anop
+&br      setc  '&bs'
+         aif   (t'&br ne 'O').mace020
+&br      setc  'r13'
+
+.mace020 anop
+         aif   (n'&op gt 1).mace030
+         st    &op,(12+(((&op+2)-((&op+2)/16)*16)*4))(,&br)
+         mexit
+
+.mace030 anop
+&o1      setc  '&op(1)'
+&o2      setc  '&op(2)'
+         stm   &o1,&o2,(12+(((&o1+2)-((&o1+2)/16)*16)*4))(&br)
+         MEND
+		 
+         MACRO
+         MACF  &op,&bs
+.*
+.*       MACF allows the loading of various register values from
+.*       a standard 72 byte savearea.
+.*
+         aif   (t'&op ne 'O').macf010
+         mexit
+
+.macf010 anop
+&br      setc  '&bs'
+         aif   (t'&br ne 'O').macf020
+&br      setc  'r13'
+
+.macf020 anop
+         aif   (n'&op gt 1).macf030
+         l     &op,(12+(((&op+2)-((&op+2)/16)*16)*4))(,&br)
+         mexit
+
+.macf030 anop
+&o1      setc  '&op(1)'
+&o2      setc  '&op(2)'
+         lm    &o1,&o2,(12+(((&o1+2)-((&o1+2)/16)*16)*4))(&br)
+         MEND
+		 

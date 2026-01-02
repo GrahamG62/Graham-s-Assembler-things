@@ -1,0 +1,188 @@
+         MACRO
+&label   ZMSGR ,                                                       +
+               &type=NEW,          * Request type                      +
+               &table=,            * Message table address             +
+               &skel=,             * Message skeleton address          +
+               &sklen=,            * Message skeleton length           +
+               &num=,              * Message number                    +
+               &sev=,              * Message severity                  +
+               &mod=,              * Module identifier                 +
+               &pref=,             * Message prefix                    +
+               &outa=,             * Area for formatted message        +
+               &outl=,             * Length of area for message        +
+               &reply=,            * Reply area address                +
+               &repln=,            * Length of reply                   +
+               &subind=,           * Substitution indicator            +
+               &subs=,             * Number of substitutions           +
+               &supress=YES,       * Suppress blanks/zeroes            +
+               &out=NO,            * Output to console                 +
+               &link=,             * Use linkage=BRANCH on WTO         +
+               &route=,            * Routing codes                     +
+               &desc=,             * Descriptor codes                  +
+               &call=YES,          * Call message routine              +
+               &exit==v(czlmex),   * Message exit routine              +
+               &mf=(E,(1))         * Build type
+
+.*     *--------------------------------------------------------------*
+.*     * $msgr Message service request                                *
+.*     *                                                              *
+.*     * v1.00 Initial version                                        *
+.*     *--------------------------------------------------------------*
+&req     setc  (upper '&type')
+         aif   ('&req' eq 'DSECT').dsct000
+         aif   ('&req' eq 'PLIST').list000
+         aif   ('&req' eq 'BUILD').bild000
+         aif   ('&req' eq 'NEW'  ).bild000
+         mnote 8,'MSGR - Invalid type &req'
+         mexit
+.*     *--------------------------------------------------------------*
+.*     * BUILD Request - Build Plist                                  *
+.*     *--------------------------------------------------------------*
+.bild000 anop
+&bld     setb  ('&req' eq 'BUILD')
+         lclb  &f1(8),&f2(8)       . Local flag arrays
+         lclc  &currs(4)           . Substitution item array
+         maca  &mf,1               . Address Parmlist
+         aif   (&bld).bild002      . Skip initialisation if building
+         macb  38,1                . Clear & initialise parmlist
+.bild002 anop
+         aif   (t'&skel  ne 'O').bild020
+         aif   (t'&table ne 'O').bild010
+         ago   .bild040
+.*       Note - Removed with call to CZLMEX
+.*       mnote 8,'$MSGR - Message source not specified'
+.*       mexit
+.bild010 anop
+         macc  04+04,&table,4,1,14
+         ago   .bild040
+.bild020 anop
+         aif   (t'&sklen ne 'O').bild030
+         mnote 8,'$MSGR - Message skeleton length not specified'
+         mexit
+.bild030 anop
+         macc  04+04,&skel,4,1,14
+         macc  04+08,&sklen,2,1,14
+&f2(1)   setb  1                   . Indicate skeleton provided
+.bild040 anop
+         aif   (t'&num eq 'O').bild050
+         macc  04+10,=y(&num),,1,14
+.bild050 anop
+         aif   (t'&pref eq 'O').bild060
+         macc  04+22,=cl3'&pref',3,1,14
+.bild060 anop
+         aif   (t'&mod eq 'O').bild070
+         macc  04+25,=cl3'&mod',3,1,14
+.bild070 anop
+         aif   (t'&sev eq 'O').bild080
+         macc  04+29,=cl1'&sev',1,1,14
+.bild080 anop
+         aif   (t'&outa eq 'O').bild100
+         aif   (t'&outl ne 'O').bild090
+         mnote 8,'$MSGR - Output area length not specified'
+         mexit
+.bild090 anop
+         macc  04+12,&outa,4,1,14
+         macc  04+16,&outl,4,1,14
+&f1(1)   setb  1                   . Indicate return message
+.bild100 anop
+&count   seta  n'&syslist
+         macc  04+20,=y(&count),,1,14
+         mnote *,'Substitution count is &count'
+&uout    setc  (upper '&out')
+         aif   ('&uout' ne 'YES').bild110
+&f1(2)   setb  1                   . Indicate output -> console
+.bild110 anop
+&usup    setc  (upper '&supress')
+         aif   ('&usup' ne 'YES').bild120
+&f1(3)   setb  1                   . Indicate suppress blanks/x'00's
+.bild120 anop
+         aif   (t'&subind eq 'O').bild130
+         macc  04+28,=cl1'&subind',1,1,14
+.bild130 anop
+&ulink   setc  (upper '&link')
+         aif   ('&ulink' ne 'BR').bild140
+&f1(4)   setb  1                   . Indicate linkage = BRANCH
+.bild140 anop
+&flg1    setc  '&f1(1)&f1(2)&f1(3)&f1(4)&f1(5)&f1(6)&f1(7)&f1(8)'
+         macc  04+30,=bl1'&flg1',1,1,14
+&flg2    setc  '&f2(1)&f2(2)&f2(3)&f2(4)&f2(5)&f2(6)&f2(7)&f2(8)'
+         macc  04+31,=bl1'&flg2',1,1,14
+
+.*     *--------------------------------------------------------------*
+.*     * Add substitution parameters to the list                      *
+.*     *--------------------------------------------------------------*
+.bild300 anop
+         aif   (&count eq 0).bild400
+&sloop   seta  1
+         la    1,04+40(,1)         * Address substitution list
+.bild310 anop
+         macd  &syslist(&sloop),1,14
+&sloop   seta  &sloop+1
+         aif   (&sloop gt &count).bild320
+         la    1,8(,1)
+         ago   .bild310
+.bild320 anop
+         maca  &mf,1               . Re-establish parm addressability
+.bild400 anop
+&ucall   setc  (upper '&call')
+         aif   ('&ucall' eq 'YES').bild410
+         mexit
+.bild410 anop
+         zcall &exit               . Call nominated routine
+         mexit
+.*     *--------------------------------------------------------------*
+.*     * PLIST Request - Reserve storage for Parameter list           *
+.*     *--------------------------------------------------------------*
+.list000 anop
+         aif   (t'&subs eq 'O').list010
+&count   seta  &subs               . Use provided subs count
+         ago   .list020
+.list010 anop
+&count   seta  9                   . Default to 9 substitutions
+.list020 anop
+&plen    seta  4+38+(&count*8)     . Parmlist length
+
+&label   ds    0f                  * $msgr parameter list
+         ds    xl&plen
+         mexit
+.*     *--------------------------------------------------------------*
+.*     * DSECT Request                                                *
+.*     *--------------------------------------------------------------*
+.dsct000 anop
+msgrb    dsect ,
+msreq    ds    al2      04+00      * Request
+msblen   ds    al2      04+02      * Request block length
+mstable  ds    al4      04+04      * Message table address
+         org   mstable
+msskel   ds    al4      04+04      * Message skeleton address
+mssklen  ds    al2      04+08      * Message skeleton length
+         org   ,
+mssnum   ds    al2      04+10      * Message number
+msrmsg   ds    al4      04+12      * Message return area
+msrlen   ds    al4      04+16      * Message return length
+mssubc   ds    al2      04+20      * Message substitution count
+msprfx   ds    cl3      04+22      * Message prefix
+msmodl   ds    cl3      04+25      * Module identifier
+mssind   ds    cl1      04+28      * Substitution indicator
+mssev    ds    cl1      04+29      * Severity code
+msflg1   ds    xl1      04+30      * Flag byte #1
+msf1ret  equ   msflg1,x'80'        *   Format & return message
+msf1con  equ   msflg1,x'40'        *   Issue message on console
+msf1sup  equ   msflg1,x'20'        *   Suppress blanks/x'00's
+msf1lbr  equ   msflg1,x'10'        *   Use Linkage=BRANCH on WTO
+msflg2   ds    xl1      04+31      * Flag byte #2
+msf2skl  equ   msflg2,x'80'        *   1 Message skeleton provided
+*                                  *   0 Message table address
+msflg3   ds    xl1      04+32      * Flag byte #3
+msflg4   ds    xl1      04+33      * Flag byte #3
+msrout   ds    xl2      04+34      * Routing codes
+msdesc   ds    xl2      04+36      * Descriptor codes
+msflen   equ   *-msgrb     38      * Length of fixed area of request
+mssubs   ds    0f         +40      * Substitution values start here
+mssadr   ds    al4        +00      * Address of value, or value
+msstyp   ds    cl1        +04      * Type
+         ds    xl1        +05      * * Spare * *
+msslen   ds    xl1        +06      * Length to substitute
+mssjst   ds    xl1        +07      * Length to justify (0=don't)
+mssubl   equ   *-mssubs    08      * Length of substitution entry
+         MEND
