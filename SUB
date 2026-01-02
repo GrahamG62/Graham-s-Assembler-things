@@ -1,0 +1,13 @@
+         MACRO
+&label   SUB   &id,&wk=,&wkreg=,&path=
+         aif   (t'&label ne 'O').sub010
+         mnote 8,'Label missing from sub macro'
+         mexit
+.sub010  anop
+&bid     setc  (upper '&label'(1,4))
+&len     seta  &wk
+&label   ds    0f
+         stkr  get,id=&bid,len=&wk,base=&wkreg,path=&path
+         lae   r12,0(r15,0)        * X'fer base address
+         using &label,r12          * Map subroutine
+         MEND

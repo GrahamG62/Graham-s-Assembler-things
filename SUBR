@@ -1,0 +1,23 @@
+         MACRO
+&label   SUBR  &r1,&r2,&cc=NO,&path=
+         gblb  &swkf               . Subroutine work flag
+         gblc  &swk                . Subroutine work register
+
+         aif   (t'&label eq 'O').subr010
+&label   ds    0h
+
+.subr010 anop
+         stkr  free,keep=&r1,also=&r2,path=&path
+
+&ucc     setc  (upper '&cc')
+         aif   ('&ucc' ne 'YES').subr020
+         ltr   r15,r15             * Set CC
+
+.subr020 anop
+         br    r14                 * And return to caller
+
+         drop  r12                 * Drop Subroutine
+         cnop  0,4                 * Align
+         ltorg ,                   * Literals
+         cnop  0,4                 * Align
+         MEND

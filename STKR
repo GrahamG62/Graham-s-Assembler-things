@@ -1,0 +1,344 @@
+         MACRO
+&label   STKR  &req,                                                   +
+               &id=,                                                   +
+               &len=,                                                  +
+               &base=,                                                 +
+               &anch=,                                                 +
+               &stdl=0,                                                +
+               &stvb=,                                                 +
+               &stvl=,                                                 +
+               &gets=,                                                 +
+               &free=,                                                 +
+               &path=,                                                 +
+               &keep=,                                                 +
+               &also=,                                                 +
+               &mf=(E,(1))
+
+.*     *--------------------------------------------------------------*
+.*     * stkr  (c) 2001, Caddis Systems Ltd.                          *
+.*     * Storage Stack Request                                        *
+.*     *                                                              *
+.*     * Request types:                                               *
+.*     *       GET     Request an area of storage, of length len=     *
+.*     *               from the stack. The requested area is prefixed *
+.*     *               by a standard 72 byte register save area,      *
+.*     *               addressed by r13. The area following the 72    *
+.*     *               bytes is addressed by base= if specified       *
+.*     *                                                              *
+.*     *       FREE    Return an area of storage to the stack.        *
+.*     *                                                              *
+.*     *       RESTART Pick up and establish 1st savearea.            *
+.*     *                                                              *
+.*     *       SETWORD Sets a user-defined word (in r0) in the stack  *
+.*     *               for sunsequent retrieval by GETWORD            *
+.*     *                                                              *
+.*     *       GETWORD Retrieves a user-defined word from the stack,  *
+.*     *               returned in r1.                                *
+.*     *                                                              *
+.*     *       GETVECT Retrieves the address of area defined in       *
+.*     *               the stack vector block defined for use by      *
+.*     *               programs                                       *
+.*     *                                                              *
+.*     *       CREATE  builds a stack, and, optionally, a vector      *
+.*     *               block.                                         *
+.*     *                                                              *
+.*     *       DESTROY Frees up all storage used by a stack           *
+.*     *                                                              *
+.*     *       DSECT   Generates Dsects required to map the stack     *
+.*     *               control blocks                                 *
+.*     *       PLIST   Generates parameter list for CREATE/DESTROY    *
+.*     *                                                              *
+.*     *--------------------------------------------------------------*
+
+&ureq    setc  (upper '&req')      . Convert request -> uppercase
+
+         aif   ('&ureq' eq 'DSECT').dsct000,                           +
+               ('&ureq' eq 'PLIST').plst000,                           +
+               ('&ureq' eq 'FREE').retn000,                            +
+               ('&ureq' eq 'GET').gets000,                             +
+               ('&ureq' eq 'SETWORD').swrd000,                         +
+               ('&ureq' eq 'GETWORD').gwrd000,                         +
+               ('&ureq' eq 'CREATE').crte000,                          +
+               ('&ureq' eq 'DESTROY').dest000,                         +
+               ('&ureq' eq 'GETVECT').gvct000,                         +
+               ('&ureq' eq 'RESTART').rstr000
+
+         mnote 8,'stkr - Invalid request &ureq'
+         mexit
+
+.*     *--------------------------------------------------------------*
+.*     * Get an area from the stack                                   *
+.*     *--------------------------------------------------------------*
+.gets000 anop
+&upth    setc  (upper '&path')     . Upper-case path=
+         aif   ('&upth' ne 'FAST').gets010
+
+         stm   r14,r12,12(r13)     * Save callers registers
+         mexit
+
+.gets010 anop
+         push  print
+         print off,nogen
+
+         lclc  &out(999)           . Allow up to 999 variable lines
+&gbas    setb  (t'&base ne'O')     . True if base=something
+&gwk     setb  0                   . True if workarea present
+&sl      setc  '0'                 . Initial length
+
+.*     *--------------------------------------------------------------*
+.*     * Build a suitable identifier for stack entry                  *
+.*     *--------------------------------------------------------------*
+&idr     setc  (upper '&id')
+         aif   (t'&id    ne 'O').idr020
+         aif   (t'&label ne 'O').idr010
+&idy     setc  (upper '&sysect')
+&idr     setc  '&idy'(2,1)'&idy'(4,3)
+         ago   .idr020
+.idr010  anop
+&idr     setc  '&id'(1,4)
+.idr020  anop
+
+.*     *--------------------------------------------------------------*
+.*     * Test for work area bracketed by {{............}}             *
+.*     *--------------------------------------------------------------*
+&inp     aread
+         aif   ('&inp'(1,2) eq '{{').inp000
+&zinp    setc  (double '&inp')
+         ainsert '&zinp',back
+         aif   (t'&len eq 'O').bld000    . Skip if no length
+&sl      setc  '&len'              . Use length provided
+         ago   .bld000
+
+.*     *--------------------------------------------------------------*
+.*     * "{{" found - create initial inputs                           *
+.*     *--------------------------------------------------------------*
+.inp000  anop
+&sa      setc  '&idr._w'
+&sl      setc  '&idr._wl'
+&gwk     setb  1                   . Show workarea present
+&idx     seta  1
+&out(&idx) setc  '&sa      dsect ,'
+         aif   (&gbas).inp010      . Add Savearea if no base=
+&idx     seta  &idx+1
+&out(&idx) setc  '         ds    18f'
+
+.*     *--------------------------------------------------------------*
+.*     * Now add subsequent lines to array until terminating "}}"     *
+.*     *--------------------------------------------------------------*
+.inp010  anop
+&inp     aread
+         aif   ('&inp'(1,2) eq '}}').inp020
+&idx     seta  &idx+1
+&out(&idx) setc '&inp'
+         ago   .inp010
+
+.*     *--------------------------------------------------------------*
+.*     * All lines read - create endings                              *
+.*     *--------------------------------------------------------------*
+.inp020  anop
+&out(&idx+1) setc  '&sl      equ   *-&sa'
+&out(&idx+2) setc  '&sysect  &sysstyp'
+&idx     seta  &idx+2
+
+.*     *--------------------------------------------------------------*
+.*     * Stuff contents of array (if any) into input stream           *
+.*     *--------------------------------------------------------------*
+&odx     seta  1
+.inp030  anop
+         aif   (&odx gt &idx).bld000
+&zout    setc  (double '&out(&odx)')
+         ainsert '&zout',back
+&odx     seta  &odx+1
+         ago   .inp030
+
+.*     *--------------------------------------------------------------*
+.*     * Generate code to invoke CZLSTK                               *
+.*     *--------------------------------------------------------------*
+.bld000  anop
+         pop   print
+         cnop  0,4                 * Align
+         stm   r14,r12,12(r13)     * Save caller's registers
+         balr  r14,0               * Local base
+         l     r14,6(,r14)         * +00
+         balr  r14,r14             * +04  * Return base
+         dc    v(czlstk)           * +06  +00
+
+         aif   (&gbas).bld020      . Skip if base=... specified
+         dc    al4(((&sl+3)/4)*4)  * +10  +04
+         dc    cl4'&idr'           * +14  +08
+
+         aif   (&gwk).bld010
+         mexit ,
+
+.bld010  anop
+         using &sa,r13             *      +12  Map stack
+         mexit ,
+
+.bld020  anop
+         dc    al4(((&sl+3)/4)*4)  * +10  +04
+         dc    cl4'&idr'           * +14  +08
+         la    &base,72(,r13)      *      +12 Address stack stuff
+         using &sa,&base           * Map stack
+         mexit ,
+
+.*     *--------------------------------------------------------------*
+.*     * Release an area from the stack                               *
+.*     *--------------------------------------------------------------*
+.retn000 anop
+&upth    setc  (upper '&path')     . Upper-case path=
+         aif   ('&upth' eq 'FAST').retn010
+
+         l     r13,4(,r13)         * Get previous stack frame
+
+.retn010 anop
+         mace  &keep               . Keep these ...
+         mace  &also               . ... and these
+         lm    r14,r12,12(r13)     * Restore stacked registers
+         mexit
+
+.*     *--------------------------------------------------------------*
+.*     * Set user word                                                *
+.*     *--------------------------------------------------------------*
+.suwd000 anop
+         la    r1,8(,0)            * Length of frame header
+         lnr   r1,r1               * Make -ve
+         ar    r1,r13              * Address frame header
+         l     r1,4(,r1)           * Address stack header
+         l     r1,16(,r1)          * Address vector block
+         st    r0,32(,r1)          * Set user word
+         mexit
+
+.*     *--------------------------------------------------------------*
+.*     * Get user word                                                *
+.*     *--------------------------------------------------------------*
+.guwd000 anop
+         la    r1,8(,0)            * Length of frame header
+         lnr   r1,r1               * Make -ve
+         ar    r1,r13              * Address frame header
+         l     r1,4(,r1)           * Address stack header
+         l     r1,16(,r1)          * Address vector block
+         l     r1,32(,r1)          * Get user word
+         mexit
+
+.*     *--------------------------------------------------------------*
+.*     * Restart using 1st savearea                                   *
+.*     *--------------------------------------------------------------*
+.rstr000 anop
+         aif   (t'&anch ne 'O').rstr010
+         mnote 8,'stkr - RESTART requires anch address'
+         mexit
+
+.rstr010 anop
+         lr    r2,r13              * Copy Callers SA address
+         aif   ('&anch'(1,1) eq '(').rstr020
+         l     r13,&anch           * Pick up anchor address
+         ago   .rstr030
+
+.rstr020 anop
+         lr    r13,&anch(1)        * Copy anchor address
+
+.rstr030 anop
+         st    r13,8(,r2)          * Chain to Caller SA
+         st    r2,4(,r13)          * Chain to our SA
+         mexit
+
+.*     *--------------------------------------------------------------*
+.*     * Get user area                                                *
+.*     *--------------------------------------------------------------*
+.gvct000 anop
+         la    r1,8(,0)            * Length of frame header
+         lnr   r1,r1               * Make -ve
+         ar    r1,r13              * Address frame header
+         l     r1,4(,r1)           * Address stack header
+         l     r1,16(,r1)          * Address vector block
+         la    r1,52(,r1)          * Get user area
+         mexit
+
+.*     *--------------------------------------------------------------*
+.*     * Create a stack                                               *
+.*     *--------------------------------------------------------------*
+.crte000 anop
+         maca  &mf,1               . Address Parmlist
+         macb  24,1                . Clear & initialise parmlist
+         macc  04+04,&stdl,4,1,14  . Set Stack default length
+         macc  04+08,&gets,4,1,14  . Set Get storage address
+         macc  04+12,&free,4,1,14  . Set Free storage address
+         aif   (t'&stvl ne 'O').crte010
+         aif   (t'&stvb ne 'O').crte020
+         ago   .crte030
+
+.crte010 anop
+         macc  04+16,&stvl,4,1,14  . Set user length for vector block
+         ago   .crte030
+
+.crte020 anop
+         macc  04+20,&stvb,4,1,14  . Address of vector block to use
+
+.crte030 anop
+         maca  &mf,1               . Re-address Parmlist
+         zcall =v(czlstkin)
+.*       lr    r13,r1              * Address 1st stack area
+         mexit
+
+.*     *--------------------------------------------------------------*
+.*     * Destroy stack                                                *
+.*     *--------------------------------------------------------------*
+.dest000 anop
+         maca  &mf,1               . Address Parmlist
+         macb  24,1                . Clear & initialise parmlist
+         zcall =v(czlstkds)
+.*       lr    r13,r1              * Reset Savearea
+         mexit
+
+.*     *--------------------------------------------------------------*
+.*     * Define parameter list for CREATE/DESTROY                     *
+.*     *--------------------------------------------------------------*
+.plst000 anop
+&plen    seta  4+24+72+72
+&label   ds    0f
+         ds    xl&plen
+         mexit
+
+.dsct000 anop
+*      *--------------------------------------------------------------*
+*      * Stack Dsects                                                 *
+*      *--------------------------------------------------------------*
+stkreq   dsect ,                   * Stack request
+stkrlen  ds    cl4        +0       * Length
+         ds    al4        +4       * Get storage address
+stkrgst  ds    al4        +8       * Get storage address
+stkrfst  ds    al4        +12      * Free storage address
+stkrusr  ds    xl4        +16      * Vector block user area length
+stkrvct  ds    al4        +20      * Address of supplied stkv
+stksa#1  ds    18f        +24      * Savearea #1
+stksa#2  ds    18f                 * Savearea #2
+
+stkb     dsect ,                   * Stack block
+stkbid   ds    cl4        +0       * Identifier 'STKB'
+stkbln   ds    xl4        +4       * Block length
+stkchn   ds    2al4       +8       * Chain pointers
+stkveb   ds    al4        +16      * a(vector block)
+stklast  ds    xl4        +20      * Last btye address in block
+stkblen  equ   *-stkb              * Length of Stack block header
+stkstrt  ds    0f         +24      * Start of stack storage
+
+stkeb    dsect ,                   * Stack frame header
+stkeln   ds    xl4        +0       * Entry length
+stkesb   ds    al4        +4       * a(start of stkb)
+stkelen  equ   *-stkeb             * Length of Stack frame header
+stkent   ds    0f         +8       * Start of Stack entry
+
+stkvb    dsect ,
+stkvid   ds    cl4        +0       * Identifier 'STKV'
+stkvln   ds    xl4        +4       * Block length
+stkvsl   ds    xl4        +8       * Default stack frame length
+stkvgs   ds    al4        +12      * Get storage routine address
+stkvfs   ds    al4        +16      * Free storage routine address
+stkvcu   ds    f          +20      * Current storage in use
+stkvmu   ds    f          +24      * Maximum storage in use
+stkvsav  ds    f          +28      * Address of 1st savearea in STKV
+stkuwrd  ds    f          +32      * User Word
+stkvanc  ds    4al4       +36      * Stack anchor
+stkvlen  equ   *-stkvb             * Length of Stack vector block
+stkvusr  ds    0f         +52      * Start of user area
+         MEND

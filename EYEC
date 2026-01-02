@@ -1,0 +1,16 @@
+         MACRO
+         EYEC
+&name    setc  (upper '&sysect')   . Program name
+&sdate   setc  '&sysdatc'          . Date as yyyymmdd
+&ddate   setc  '&sdate'(7,2)       . dd
+&mdate   setc  '&sdate'(5,2)       . mm
+&ydate   setc  '&sdate'(1,4)       . yyyy
+&v       setc  '1'
+&r       setc  '000'
+&m       setc  'A'
+         dc    c'&name '
+         dc    c'&v..&r&m '
+         dc    c'&systime '
+         dc    c'&ddate./&mdate./&ydate '
+         dc    c'(c) &ydate All rights reserved, Caddis Systems'
+         MEND

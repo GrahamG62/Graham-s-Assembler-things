@@ -1,0 +1,658 @@
+CZLSTK   title 'Storage stack Control'
+*      *--------------------------------------------------------------*
+*      * Generalised storage aquire/free                              *
+*      *                                                              *
+*      * (c) Caddis Systems Ltd 2001, All rights reserved             *
+*      * v1.000                                                       *
+*      *--------------------------------------------------------------*
+czlstk   rsect ,
+czlstk   amode 31
+czlstk   rmode any
+
+*      *--------------------------------------------------------------*
+*      * Stack control Mainline - r13 @ current entry                 *
+*      *                                                              *
+*      * r14 @ +00 04  Address of this routine                        *
+*      *       +04 04  length                                         *
+*      *       +08 04  Identifier                                     *
+*      *       +12     Return address                                 *
+*      *                                                              *
+*      * Please note that this routine cannot alter the contents of   *
+*      * register 14.                                                 *
+*      *                                                              *
+*      *--------------------------------------------------------------*
+         l     r12,0(,r14)         * Set base register
+         using czlstk,r12          * Make code addressable
+         b     main000             * Skip eye-catchers, etc.
+
+         cnop  0,4
+         eyec  ,                   * Eye-catchers
+         cnop  0,4
+
+*      *--------------------------------------------------------------*
+*      * Global mappings                                              *
+*      *--------------------------------------------------------------*
+cs       using stkb,r11            * Map Current Stack block
+ns       using stkb,r10            * Map New Stack block
+         using stkvb,r9            * Map Stack vector block
+         using stkeb,r8            * Map Stack frame header
+
+main000  ds    0h
+         la    r8,stkelen(,0)      * Set stack frame header length
+         lnr   r8,r8               * Set as -ve value
+         ar    r8,r13              * Address stack frame header
+         l     r3,stkeln           * Get length of current frame
+         l     r4,4(,r14)          * Get requested length
+         la    r4,72(,r4)          * Plus 72 bytes for registers
+         l     r11,stkesb          * Address STKB
+         clc   =c'STKB',cs.stkbid  * Got correct id ?
+         bne   main800             * No, go die noisily
+
+         la    r8,stkelen(r3,r8)   * Address next Stack Frame header
+         la    r0,stkelen-1(r4,r8) * Address of last byte requested
+
+         cl    r0,cs.stklast       * Enough room left in block ?
+         bnh   main010             * Yes, onwards
+
+*      *--------------------------------------------------------------*
+*      * Getting another STKB - swap to savearea in STKV for local    *
+*      * usage                                                        *
+*      *--------------------------------------------------------------*
+         l     r9,cs.stkveb        * Address STKV
+         lr    r2,r13              * Copy r13
+         l     r13,stkvsav         * Address 1st STKV savearea
+         st    r2,4(,r13)          * Chain new savearea backwards
+         st    r13,8(,r2)          * Chain previous savearea forwards
+
+         l     r15,=a(newblock)    * Get ...
+         basr  r6,r15              * ... another block
+
+         lr    r11,r1              * Address new block
+         la    r8,stkblen(,r11)    * Address 1st STKE
+         l     r13,4(,r13)         * Restore original r13
+
+main010  ds    0h
+         st    r4,stkeln           * Set length
+         st    r11,stkesb          * Set STKB address
+         la    r2,stkent           * R2 @ current frame
+         st    r13,stkent+4        * Chain prev. frame from new one
+         st    r2,8(,r13)          * Chain new frame from previous
+         lr    r13,r2              * R13 @ current frame
+         mvc   0(4,r13),8(r14)     * Move in id
+
+         icm   r1,15,4(r14)        * Workarea requested ?
+         bz    main090             * No, return
+
+         la    r0,72(,r13)         * Yes, address workarea
+         lr    r2,r0               * Copy address
+         xr    r3,r3               * Clear
+         mvcl  r0,r2               * Initialise frame to x'00's
+
+main090  ds    0h
+         l     r2,4(,r13)          * Address previous frame
+         macf  (r15,r12),r2        * Get caller's regs from stack
+         b     12(,r14)            * And return to caller
+
+         cnop  0,4                 * Align
+         ltorg ,                   * Literals
+         cnop  0,4                 * Align
+         drop  r12                 * Drop routine base
+
+main800  soc1  'STK ABEND000'      * Invalid stack entry
+
+         title 'Get New Stack Block'
+*      *--------------------------------------------------------------*
+*      * Get new or existing STKB with room for requested area        *
+*      *                                                              *
+*      * r4 = Length of requested stack frame                         *
+*      *                                                              *
+*      *--------------------------------------------------------------*
+newblock ds    0h
+         stm   r14,r12,12(r13)     * Save registers on stack
+         lr    r2,r13              * Copy r13
+         la    r13,72(,r13)        * Address 2nd STKV savearea
+         st    r2,4(,r13)          * Chain new savearea backwards
+         st    r13,8(,r2)          * Chain previous savearea forwards
+         lae   r12,0(r15,0)        * X'fer base address
+         using newblock,r12        * Map subroutine
+
+newb010  ds    0h
+         icm   r10,15,cs.stkchn    * Got chained STKB ?
+         bz    newb020             * No, go aquire one !
+
+         lr    r11,r10             * Yes, copy current STKB address
+         la    r0,(stkelen+stkblen-1)(r4,r10) * Get addr. of last byte
+*                                  * required for area
+         cl    r0,ns.stklast       * Sufficient room in block ?
+         bh    newb010             * No, try next one !
+
+         lr    r1,r10              * Yes, address this block
+         b     newb090             * And return
+
+newb020  ds    0h
+         lr    r0,r4               * Copy requested frame size
+         a     r0,=a(stkblen+stkelen)  * Plus headers
+         o     r0,=x'00001000'     * Round up ...
+         n     r0,=x'fffff000'     * ... to 4k boundary
+
+         xr    r1,r1               * Clear r1
+         zcall stkvgs              * Go get storage
+         bnz   newb090             * Failed, return
+
+         lr    r10,r1              * Address New STKB
+
+*      *--------------------------------------------------------------*
+*      * Build STKB                                                   *
+*      *--------------------------------------------------------------*
+         mvc   ns.stkbid,=c'STKB'  * Set block id
+         st    r0,ns.stkbln        * Set block length
+         st    r9,ns.stkveb        * Set vector block address
+         alr   r0,r10              * Length + base address ...
+         bctr  r0,0                * ...Less 1
+         st    r0,ns.stklast       * Save as last available byte
+         st    r10,cs.stkchn       * Chain from previous STKB
+         st    r11,ns.stkchn+4     * Chain back to previous STKB
+         lr    r1,r10              * Set address for return
+
+newb090  ds    0h
+         l     r13,4(,r13)         * Get previous savearea
+         mace  (r15,r1)            * Set registers as required
+         lm    r14,r12,12(r13)     * Restore caller's registers
+         br    r6                  * And return
+         drop  r12                 * Drop Subroutine
+
+         title 'Storage stack Initialisation'
+*      *--------------------------------------------------------------*
+*      * Stack Initialisation                                         *
+*      *--------------------------------------------------------------*
+         entry czlstkin
+czlstkin ds    0h
+         l     r1,0(,r1)           * Address parmeters
+         stm   r14,r12,stksa#1-stkreq+12(r1)  * Save callers registers
+         lae   r12,0(r15,0)        * Transfer base address
+         using czlstkin,r12        * Make code addressable
+
+         lr    r7,r1               * Address parmeters
+         using stkreq,r7           * Map parameters
+
+*      *--------------------------------------------------------------*
+*      * Chain temporary saveareas                                    *
+*      *--------------------------------------------------------------*
+         lr    r4,r13              * Copy caller's r13
+         la    r13,stksa#2         * Address second savearea
+         la    r2,stksa#1          * Address first savearea
+         st    r2,4(,r13)          * Chain backwards
+         st    r13,8(,r2)          * Chain forwards
+
+*      *--------------------------------------------------------------*
+*      * Build Vector block if required                               *
+*      *--------------------------------------------------------------*
+         icm   r9,15,stkrvct       * Got a vector block ?
+         bnz   tkin010             * Yes, skip this part
+
+         l     r0,stkrusr          * User length
+         a     r0,=a(stkvlen)      * Plus header
+         a     r0,=a(72*3)         * Plus saveareas * 3
+         xr    r1,r1               * Clear r1
+         zcall stkrgst             * Go get storage
+         bnz   tkin090             * Failed, return 
+         lr    r9,r1               * Address block
+
+*      *--------------------------------------------------------------*
+*      * Build STKV                                                   *
+*      *--------------------------------------------------------------*
+         mvc   stkvid,=c'STKV'     * Set block id
+         st    r0,stkvln           * Set block length
+         mvc   stkvgs,stkrgst      * Set Get storage routine address
+         mvc   stkvfs,stkrfst      * Set Free storage routine address
+         l     r1,stkrusr          * User length
+         a     r1,=a(stkvlen)      * Plus header
+         alr   r1,r9               * Plus block start = 1st savearea
+         st    r1,stkvsav          * Set address of 1st savearea
+
+*      *--------------------------------------------------------------*
+*      * Get initial STKB                                             *
+*      *--------------------------------------------------------------*
+tkin010  ds    0h
+         l     r0,stkrlen          * Get initial length
+         a     r0,=a(stkblen)      * Plus header
+         o     r0,=x'00001000'     * Round up ...
+         n     r0,=x'fffff000'     * ... to 4k boundary
+
+         xr    r1,r1               * Clear r1
+         zcall stkrgst             * Go get storage
+         bnz   tkin090             * Failed, return
+
+         lr    r11,r1              * Address STKB
+
+*      *--------------------------------------------------------------*
+*      * Build STKB                                                   *
+*      *--------------------------------------------------------------*
+         mvc   cs.stkbid,=c'STKB'  * Set block id
+         st    r0,cs.stkbln        * Set block length
+         mvc   cs.stkchn,=a(0,0)   * Clear chain pointers
+         st    r9,cs.stkveb        * Set vector block address
+         st    r11,stkvanc         * Set as first on chain
+
+         alr   r0,r11              * Length + base address ...
+         bctr  r0,0                * ...Less 1
+         st    r0,cs.stklast       * Save as last available byte
+
+*      *--------------------------------------------------------------*
+*      * Set up initial stack area                                    *
+*      *--------------------------------------------------------------*
+         la    r8,stkblen(,r11)    * Address 1st STKE
+         mvc   stkeln,=a(stkelen+72) * Set block length
+         st    r11,stkesb          * Set STKB address
+         mvc   cs.stkchn+4,=a(0)   * Set previous address to 0
+
+*      *--------------------------------------------------------------*
+*      * Create inital savearea & chain back to external routine      *
+*      *--------------------------------------------------------------*
+         lr    r2,r4               * Copy callers savearea address
+         la    r13,stkent          * Address 1st savearea in stack
+         st    r13,8(,r2)          * Chain savearea to callers
+         st    r2,4(,r13)          * Chain callers to savearea
+         mvc   0(4,r13),=c'WEEB'   * Set eye-catcher
+         lr    r1,r13              * Set savearea address for invoking
+*                                  * routine
+         la    r2,stksa#1          * Address caller's savearea
+
+tkin090  ds    0h
+         mace  (r15,r1),r2         * Set registers ...
+         lm    r14,r12,12(r2)      * ... restore ...
+         ltr   r15,r15             * ... Set cc  ...
+         br    r14                 * ... and return to caller
+
+         cnop  0,4                 * Align
+         ltorg ,                   * Literals
+         cnop  0,4                 * Align
+         drop  r12,r7              * Drop routine base, request
+
+         title 'Storage stack Termination'
+*      *--------------------------------------------------------------*
+*      * Stack Termination                                            *
+*      *--------------------------------------------------------------*
+         entry czlstkds
+czlstkds ds    0h
+         l     r1,0(,r1)           * Address parmeters
+         stm   r14,r12,stksa#1-stkreq+12(r1)  * Save callers registers
+         lae   r12,0(r15,0)        * Transfer base address
+         using czlstkds,r12        * Make code addressable
+
+         lr    r7,r1               * Address parmeters
+         using stkreq,r7           * Map parameters
+
+         la    r8,stkelen(,0)      * Set stack frame header length
+         lnr   r8,r8               * Set as -ve value
+         ar    r8,r13              * Address stack frame header
+         l     r11,stkesb          * Address STKB
+         l     r9,cs.stkveb        * Address STKV
+
+         l     r4,4(,r13)          * Get caller's original savearea
+
+*      *--------------------------------------------------------------*
+*      * Chain temporary saveareas                                    *
+*      *--------------------------------------------------------------*
+         la    r13,stksa#2         * Address second savearea
+         la    r14,stksa#1         * Address first savearea
+         st    r14,4(,r13)         * Chain backwards
+         st    r13,8(,r14)         * Chain forwards
+
+*      *--------------------------------------------------------------*
+*      * Free all stkb's on the chain                                 *
+*      *--------------------------------------------------------------*
+         la    r11,stkvanc-(stkchn-stkb) * Address chain anchor
+         l     r10,cs.stkchn       * Get 1st on chain
+
+dstr010  ds    0h
+         ltr   r11,r10             * Got stkb element ?
+         bz    dstr020             * No, all done
+
+         l     r10,cs.stkchn       * Get next element
+
+         lr    r1,r11              * Address to free for element
+         l     r0,cs.stkbln        * Length to free for element
+         zcall stkvfs              * Free storage
+
+         b     dstr010             * And loop
+
+*      *--------------------------------------------------------------*
+*      * Free up STKV - note will break if STKV originally provided   *
+*      * at initialisation time                                       *
+*      *--------------------------------------------------------------*
+dstr020  ds    0h
+         lr    r1,r9               * Copy stkv address
+         l     r0,stkvln           * Get stkv length
+         zcall stkvfs              * Free up stkv
+
+dstr090  ds    0h
+         lr    r13,r4              * Get caller's original savearea
+         la    r4,stksa#1          * Address caller's savearea
+         mace  (r15,r1),r4         * Set registers ...
+         lm    r14,r12,12(r4)      * ... restore ...
+         br    r14                 * ... and return to caller
+
+         cnop  0,4                 * Align
+         ltorg ,                   * Literals
+         cnop  0,4                 * Align
+         drop  r12,r7              * Drop routine base, request
+
+         stkr  dsect               * Map Stack areas
+         regequ ,                  * Register equates
+         end   ,                   * C'est la!
+
+         l     r12,0(,r14)         * Set base register
+         using czlstk,r12          * Make code addressable
+         b     main000             * Skip eye-catchers, etc.
+
+         cnop  0,4
+         eyec  ,                   * Eye-catchers
+         cnop  0,4
+
+*      *--------------------------------------------------------------*
+*      * Global mappings                                              *
+*      *--------------------------------------------------------------*
+cs       using stkb,r11            * Map Current Stack block
+ns       using stkb,r10            * Map New Stack block
+         using stkvb,r9            * Map Stack vector block
+         using stkeb,r8            * Map Stack frame header
+
+main000  ds    0h
+         la    r8,stkelen(,0)      * Set stack frame header length
+         lnr   r8,r8               * Set as -ve value
+         ar    r8,r13              * Address stack frame header
+         l     r3,stkeln           * Get length of current frame
+         l     r4,4(,r14)          * Get requested length
+         la    r4,72(,r4)          * Plus 72 bytes for registers
+         l     r11,stkesb          * Address STKB
+         clc   =c'STKB',cs.stkbid  * Got correct id ?
+         bne   main800             * No, go die noisily
+
+         la    r8,stkelen(r3,r8)   * Address next Stack Frame header
+         la    r0,stkelen-1(r4,r8) * Address of last byte requested
+
+         cl    r0,cs.stklast       * Enough room left in block ?
+         bnh   main010             * Yes, onwards
+
+*      *--------------------------------------------------------------*
+*      * Getting another STKB - swap to savearea in STKV for local    *
+*      * usage                                                        *
+*      *--------------------------------------------------------------*
+         l     r9,cs.stkveb        * Address STKV
+         lr    r2,r13              * Copy r13
+         l     r13,stkvsav         * Address 1st STKV savearea
+         st    r2,4(,r13)          * Chain new savearea backwards
+         st    r13,8(,r2)          * Chain previous savearea forwards
+
+         l     r15,=a(newblock)    * Get ...
+         basr  r6,r15              * ... another block
+
+         lr    r11,r1              * Address new block
+         la    r8,stkblen(,r11)    * Address 1st STKE
+         l     r13,4(,r13)         * Restore original r13
+
+main010  ds    0h
+         st    r4,stkeln           * Set length
+         st    r11,stkesb          * Set STKB address
+         la    r2,stkent           * R2 @ current frame
+         st    r13,stkent+4        * Chain prev. frame from new one
+         st    r2,8(,r13)          * Chain new frame from previous
+         lr    r13,r2              * R13 @ current frame
+         mvc   0(4,r13),8(r14)     * Move in id
+
+         icm   r1,15,4(r14)        * Workarea requested ?
+         bz    main090             * No, return
+
+         la    r0,72(,r13)         * Yes, address workarea
+         lr    r2,r0               * Copy address
+         xr    r3,r3               * Clear
+         mvcl  r0,r2               * Initialise frame to x'00's
+
+main090  ds    0h
+         l     r2,4(,r13)          * Address previous frame
+         macf  (r15,r12),r2        * Get caller's regs from stack
+         b     12(,r14)            * And return to caller
+
+         cnop  0,4                 * Align
+         ltorg ,                   * Literals
+         cnop  0,4                 * Align
+         drop  r12                 * Drop routine base
+
+main800  soc1  'STK ABEND000'      * Invalid stack entry
+
+         title 'Get New Stack Block'
+*      *--------------------------------------------------------------*
+*      * Get new or existing STKB with room for requested area        *
+*      *                                                              *
+*      * r4 = Length of requested stack frame                         *
+*      *                                                              *
+*      *--------------------------------------------------------------*
+newblock ds    0h
+         stm   r14,r12,12(r13)     * Save registers on stack
+         lr    r2,r13              * Copy r13
+         la    r13,72(,r13)        * Address 2nd STKV savearea
+         st    r2,4(,r13)          * Chain new savearea backwards
+         st    r13,8(,r2)          * Chain previous savearea forwards
+         lae   r12,0(r15,0)        * X'fer base address
+         using newblock,r12        * Map subroutine
+
+newb010  ds    0h
+         icm   r10,15,cs.stkchn    * Got chained STKB ?
+         bz    newb020             * No, go aquire one !
+
+         lr    r11,r10             * Yes, copy current STKB address
+         la    r0,(stkelen+stkblen-1)(r4,r10) * Get addr. of last byte
+*                                  * required for area
+         cl    r0,ns.stklast       * Sufficient room in block ?
+         bh    newb010             * No, try next one !
+
+         lr    r1,r10              * Yes, address this block
+         b     newb090             * And return
+
+newb020  ds    0h
+         lr    r0,r4               * Copy requested frame size
+         a     r0,=a(stkblen+stkelen)  * Plus headers
+*        o     r0,=x'00000800'     * Round up ...
+*        n     r0,=x'fffff800'     * ... to 2k boundary
+         o     r0,=x'00001000'     * Round up ...
+         n     r0,=x'ffff7000'     * ... to 4k boundary
+
+         xr    r1,r1               * Clear r1
+         zcall stkvgs              * Go get storage
+
+         lr    r10,r1              * Address New STKB
+
+*      *--------------------------------------------------------------*
+*      * Build STKB                                                   *
+*      *--------------------------------------------------------------*
+         mvc   ns.stkbid,=c'STKB'  * Set block id
+         st    r0,ns.stkbln        * Set block length
+         st    r9,ns.stkveb        * Set vector block address
+         alr   r0,r10              * Length + base address ...
+         bctr  r0,0                * ...Less 1
+         st    r0,ns.stklast       * Save as last available byte
+         st    r10,cs.stkchn       * Chain from previous STKB
+         st    r11,ns.stkchn+4     * Chain back to previous STKB
+         lr    r1,r10              * Set address for return
+
+newb090  ds    0h
+         l     r13,4(,r13)         * Get previous savearea
+         mace  (r15,r1)            * Set registers as required
+         lm    r14,r12,12(r13)     * Restore caller's registers
+         br    r6                  * And return
+         drop  r12                 * Drop Subroutine
+
+         title 'Storage stack Initialisation'
+*      *--------------------------------------------------------------*
+*      * Stack Initialisation                                         *
+*      *--------------------------------------------------------------*
+         entry czlstkin
+czlstkin ds    0h
+         l     r1,0(,r1)           * Address parmeters
+         stm   r14,r12,stksa#1-stkreq+12(r1)  * Save callers registers
+         lae   r12,0(r15,0)        * Transfer base address
+         using czlstkin,r12        * Make code addressable
+
+         lr    r7,r1               * Address parmeters
+         using stkreq,r7           * Map parameters
+
+*      *--------------------------------------------------------------*
+*      * Chain temporary saveareas                                    *
+*      *--------------------------------------------------------------*
+         lr    r4,r13              * Copy caller's r13
+         la    r13,stksa#2         * Address second savearea
+         la    r2,stksa#1          * Address first savearea
+         st    r2,4(,r13)          * Chain backwards
+         st    r13,8(,r2)          * Chain forwards
+
+*      *--------------------------------------------------------------*
+*      * Build Vector block if required                               *
+*      *--------------------------------------------------------------*
+         icm   r9,15,stkrvct       * Got a vector block ?
+         bnz   tkin010             * Yes, skip this part
+
+         l     r0,stkrusr          * User length
+         a     r0,=a(stkvlen)      * Plus header
+         a     r0,=a(72*3)         * Plus saveareas * 3
+         xr    r1,r1               * Clear r1
+         zcall stkrgst             * Go get storage
+         lr    r9,r1               * Address block
+
+*      *--------------------------------------------------------------*
+*      * Build STKV                                                   *
+*      *--------------------------------------------------------------*
+         mvc   stkvid,=c'STKV'     * Set block id
+         st    r0,stkvln           * Set block length
+         mvc   stkvgs,stkrgst      * Set Get storage routine address
+         mvc   stkvfs,stkrfst      * Set Free storage routine address
+         l     r1,stkrusr          * User length
+         a     r1,=a(stkvlen)      * Plus header
+         alr   r1,r9               * Plus block start = 1st savearea
+         st    r1,stkvsav          * Set address of 1st savearea
+
+*      *--------------------------------------------------------------*
+*      * Get initial STKB                                             *
+*      *--------------------------------------------------------------*
+tkin010  ds    0h
+         l     r0,stkrlen          * Get initial length
+         a     r0,=a(stkblen)      * Plus header
+*        o     r0,=x'00000800'     * Round up ...
+*        n     r0,=x'fffff800'     * ... to 2k boundary
+         o     r0,=x'00001000'     * Round up ...
+         n     r0,=x'ffff7000'     * ... to 4k boundary
+
+         xr    r1,r1               * Clear r1
+         zcall stkrgst             * Go get storage
+
+         lr    r11,r1              * Address STKB
+
+*      *--------------------------------------------------------------*
+*      * Build STKB                                                   *
+*      *--------------------------------------------------------------*
+         mvc   cs.stkbid,=c'STKB'  * Set block id
+         st    r0,cs.stkbln        * Set block length
+         mvc   cs.stkchn,=a(0,0)   * Clear chain pointers
+         st    r9,cs.stkveb        * Set vector block address
+         st    r11,stkvanc         * Set as first on chain
+
+         alr   r0,r11              * Length + base address ...
+         bctr  r0,0                * ...Less 1
+         st    r0,cs.stklast       * Save as last available byte
+
+*      *--------------------------------------------------------------*
+*      * Set up initial stack area                                    *
+*      *--------------------------------------------------------------*
+         la    r8,stkblen(,r11)    * Address 1st STKE
+         mvc   stkeln,=a(stkelen+72) * Set block length
+         st    r11,stkesb          * Set STKB address
+         mvc   cs.stkchn+4,=a(0)   * Set previous address to 0
+
+*      *--------------------------------------------------------------*
+*      * Create inital savearea & chain back to external routine      *
+*      *--------------------------------------------------------------*
+         lr    r2,r4               * Copy callers savearea address
+         la    r13,stkent          * Address 1st savearea in stack
+         st    r13,8(,r2)          * Chain savearea to callers
+         st    r2,4(,r13)          * Chain callers to savearea
+         mvc   0(4,r13),=c'WEEB'   * Set eye-catcher
+         lr    r1,r13              * Set savearea address for invoking
+*                                  * routine
+         la    r2,stksa#1          * Address caller's savearea
+         mace  (r15,r1),r2         * Set registers ...
+         lm    r14,r12,12(r2)      * ... restore ...
+         br    r14                 * ... and return to caller
+
+         cnop  0,4                 * Align
+         ltorg ,                   * Literals
+         cnop  0,4                 * Align
+         drop  r12,r7              * Drop routine base, request
+
+         title 'Storage stack Termination'
+*      *--------------------------------------------------------------*
+*      * Stack Termination                                            *
+*      *--------------------------------------------------------------*
+         entry czlstkds
+czlstkds ds    0h
+         l     r1,0(,r1)           * Address parmeters
+         stm   r14,r12,stksa#1-stkreq+12(r1)  * Save callers registers
+         lae   r12,0(r15,0)        * Transfer base address
+         using czlstkds,r12        * Make code addressable
+
+         lr    r7,r1               * Address parmeters
+         using stkreq,r7           * Map parameters
+
+         la    r8,stkelen(,0)      * Set stack frame header length
+         lnr   r8,r8               * Set as -ve value
+         ar    r8,r13              * Address stack frame header
+         l     r11,stkesb          * Address STKB
+         l     r9,cs.stkveb        * Address STKV
+
+         l     r4,4(,r13)          * Get caller's original savearea
+
+*      *--------------------------------------------------------------*
+*      * Chain temporary saveareas                                    *
+*      *--------------------------------------------------------------*
+         la    r13,stksa#2         * Address second savearea
+         la    r14,stksa#1         * Address first savearea
+         st    r14,4(,r13)         * Chain backwards
+         st    r13,8(,r14)         * Chain forwards
+
+*      *--------------------------------------------------------------*
+*      * Free all stkb's on the chain                                 *
+*      *--------------------------------------------------------------*
+         la    r11,stkvanc-(stkchn-stkb) * Address chain anchor
+         l     r10,cs.stkchn       * Get 1st on chain
+
+dstr010  ds    0h
+         ltr   r11,r10             * Got stkb element ?
+         bz    dstr020             * No, all done
+
+         l     r10,cs.stkchn       * Get next element
+
+         lr    r1,r11              * Address to free for element
+         l     r0,cs.stkbln        * Length to free for element
+         zcall stkvfs              * Free storage
+
+         b     dstr010             * And loop
+
+dstr020  ds    0h
+         lr    r1,r9               * Copy stkv address
+         l     r0,stkvln           * Get stkv length
+         zcall stkvfs              * Free up stkv
+
+dstr090  ds    0h
+         lr    r13,r4              * Get caller's original savearea
+         la    r4,stksa#1          * Address caller's savearea
+         mace  (r15,r1),r4         * Set registers ...
+         lm    r14,r12,12(r4)      * ... restore ...
+         br    r14                 * ... and return to caller
+
+         cnop  0,4                 * Align
+         ltorg ,                   * Literals
+         cnop  0,4                 * Align
+         drop  r12,r7              * Drop routine base, request
+
+         stkr  dsect               * Map Stack areas
+         regequ ,                  * Register equates
+         end   ,                   * C'est la!
