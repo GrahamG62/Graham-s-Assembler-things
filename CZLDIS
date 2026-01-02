@@ -1,0 +1,534 @@
+CZLDIS   title 'Disassembler'
+*      *--------------------------------------------------------------*
+*      * Disassembler                                                 *
+*      *                                                              *
+*      * (c) Caddis Systems Ltd 2001, All rights reserved             *
+*      * v1.000                                                       *
+*      *                                                              *
+*      * The disassember works thus:                                  *
+*      *   The address of the storage to be disassembled is passed in *
+*      * the parameter list, and the 1st byte thereof used as an      *
+*      * index into the table of opcodes in CZLOPC. If the relevant   *
+*      * instruction is found with this first lookup, it is           *
+*      * disassembled and formatted according the instruction format  *
+*      * held in the opcode entry, otherwise a further lookup, using  *
+*      * a binary chop, is performed for 2 byte opcodes. Invalid      *
+*      * opcodes are detected in either lookup. The table at proctab  *
+*      * indicates which disassembling technique to use for a given   *
+*      * instruction, and the corresponding call to CZLMSG to create  *
+*      * the output. The address of an area to return the             *
+*      * disassembled representation of the instruction and its       *
+*      * length is passed via the parameter list also, and the        *
+*      * process is completed by passing an updated instruction       *
+*      * address back to the calling program.                         *
+*      * The subroutines in this program run without register stacks  *
+*      * as far as possible to reduce the overhead inevitable with    *
+*      * an intensive process.                                        *
+*      *                                                              *
+*      *--------------------------------------------------------------*
+czldis   rsect ,
+czldis   amode 31                  * Use ALL the storage available
+czldis   rmode any                 * Run anywhere!
+
+         stkr  get,base=r11
+{{
+wkinpb   ds    f                   * Input base address
+wkinpa   ds    f                   * Input area address
+wkreta   ds    f                   * Return area address
+wkretl   ds    f                   * Return area length
+wkoff    ds    f                   * Offset of loc from base
+wkmsg    ds    f                   * Message address
+wknul    ds    xl72                * Area to clear registers
+wkmsl    ds    h                   * Message length
+wkimm    ds    x                   * Immediate value
+wkbild   ds    cl30                * Area to build bits & pieces
+wkmsgp   zmsgr type=plist,subs=13  * MSG Parameter list area
+}}
+
+         lae   r12,0(r15,0)        * Transfer base address
+         using czldis,r12          * Make code addressable
+         b     main000             * Skip eye-catchers, etc.
+
+         cnop  0,4
+         eyec  ,                   * Eye-catchers
+         cnop  0,4
+
+*      *--------------------------------------------------------------*
+*      * Global mapping, etc...                                       *
+*      *--------------------------------------------------------------*
+         using opcode,r10          * Map opcode table
+         using dprc,r8             * Map process table
+
+main000  ds    0h
+         l     r1,0(,r1)           * Address input parms
+         using dsmreq,r1           * Map input parms
+         mvc   wkinpb,dsmbase      * Copy base address
+         mvc   wkinpa,dsmloc       * Copy location
+         mvc   wkreta,dsmret       * Copy output buffer address
+         mvc   wkretl,dsmretl      * Copy output buffer length
+         drop  r1                  * Drop input parms
+
+         xc    wknul,wknul         * Set to x'00's
+         l     r10,=v(czlopc)      * Address opcode table
+
+         l     r0,wkinpa           * Get location
+         sl    r0,wkinpb           * Minus base
+         st    r0,wkoff            * Save as offset
+
+*      *--------------------------------------------------------------*
+*      * Disassemble instruction at wkinpa                            *
+*      *--------------------------------------------------------------*
+         l     r9,wkinpa           * Pick up instruction address
+         xr    r3,r3               * Clear for IC
+         ic    r3,0(,r9)           * Get opcode
+         mh    r3,=al2(opcelen)    * Times table entry length
+         la    r10,0(r3,r10)       * Address matching opcode entry
+         clc   =y(-1),opcvct       * 2 byte opcode ?
+         bne   main010             * No, skip
+
+         zcall =a(twobyte)         * Yes, locate 2 byte opcode
+
+main010  ds    0h
+         lh    r15,opcvct          * Get vector
+         mh    r15,=y(dprcl)       * * length for index into proctab
+         la    r8,proctab(r15)     * Pick up process address
+         mvc   wkmsg,dpmsg         * Get message
+         mvc   wkmsl,dpmsl+2       * Get message length
+         lr    r1,r9               * Copy address
+         zcall dpdis               * Disassemble instruction
+
+         icm   r15,15,dpchk        * Got an alt. routine
+         bz    main020             * No, skip
+
+         zcall (r15)               * Yes, call it
+
+main020  ds    0h
+         zcall dpmfm               * Call format routine
+
+         la    r15,0(,0)           * Set Rc=0
+
+main090  ds    0h
+         stkr  free,keep=(r0,r1)
+         br    r14                 * And return to caller
+
+*      *--------------------------------------------------------------*
+*      * Process table:                                               *
+*      *         +Disassemble                                         *
+*      *         |      +Message                                      *
+*      *         |      |        +Message length                      *
+*      *         |      |        |          +Format Routine           *
+*      *         |      |        |          |       +Alt. message chk *
+*      *         |      |        |          |       |        +Type    *
+*      *--------------------------------------------------------------*
+proctab  ds    0f
+         dc    a(inv),a(mrinv),a(l'mrinv),a(mfmi),a(0)       00
+         dc    a(inv),a(mee1a),a(l'mee1a),a(mfme),a(0)       01
+         dc    a(rr1),a(mrr1a),a(l'mrr1a),a(mfm2),a(0)       02
+         dc    a(rr1),a(mrr2a),a(l'mrr2a),a(mfm2),a(0)       03
+         dc    a(rr3),a(mrr3a),a(l'mrr3a),a(mfm2),a(0)       04
+         dc    a(rx1),a(mrs1a),a(l'mrs1a),a(mfm4),a(0)       05
+         dc    a(rx1),a(mrs2a),a(l'mrs2a),a(mfm4),a(rs2b)    06
+         dc    a(rx1),a(mrs3a),a(l'mrs3a),a(mfm4),a(0)       07
+         dc    a(rx1),a(mrx1a),a(l'mrx1a),a(mfm4),a(rx1b)    08
+         dc    a(rx1),a(mrx2a),a(l'mrx2a),a(mfm4),a(rx2b)    09
+         dc    a(sss),a(msssa),a(l'msssa),a(mfm4),a(0)       10
+         dc    a(si1),a(msi1a),a(l'msi1a),a(mfmm),a(0)       11
+         dc    a(inv),a(mrinv),a(l'mrinv),a(mfm4),a(0)       12
+         dc    a(ss2),a(mss2a),a(l'mss2a),a(mfm6),a(0)       13
+         dc    a(ss3),a(mss3a),a(l'mss3a),a(mfm6),a(0)       14
+         dc    a(ss2),a(mss2a),a(l'mss2a),a(mfm6),a(0)       15
+         dc    a(rre),a(mrrea),a(l'mrrea),a(mfm4),a(0)       16
+         dc    a(inv),a(mrinv),a(l'mrinv),a(mfmi),a(0)       17
+         dc    a(inv),a(mrinv),a(l'mrinv),a(mfmi),a(0)       18
+         dc    a(inv),a(mrinv),a(l'mrinv),a(mfmi),a(0)       19
+
+*      *--------------------------------------------------------------*
+*      * Messages to format instructions                              *
+*      *--------------------------------------------------------------*
+mrinv    dc    c'@0 @1  @2              data   @3'
+mee1a    dc    c'@0 @1  @2              @3'                    PR
+mrr1a    dc    c'@0 @1  @2              @3 R@4,R@5'            LR
+mrr2a    dc    c'@0 @1  @2              @3 @4,R@5'             BCR
+mrr3a    dc    c'@0 @1  @2              @3 @4'                 SVC
+mrrea    dc    c'@0 @1  @2 @3         @4 R@5,R@6'              BAKR
+mrs1a    dc    c'@0 @1  @2 @3         @4 R@5,R@6,@8(R@7)'      BXLE
+mrs2a    dc    c'@0 @1  @2 @3         @4 R@5,@8(R@7)'          SLL
+mrs2b    dc    c'@0 @1  @2 @3         @4 R@5,@8'               SLL
+mrs3a    dc    c'@0 @1  @2 @3         @4 R@5,@6,@8(R@7)'       ICM
+mrx1a    dc    c'@0 @1  @2 @3         @4 R@5,@8(R@6,R@7)'      LA
+mrx1b    dc    c'@0 @1  @2 @3         @4 R@5,@8(,R@7)'         LA
+mrx2a    dc    c'@0 @1  @2 @3         @4 @5,@8(R@6,R@7)'       BC
+mrx2b    dc    c'@0 @1  @2 @3         @4 @5,@8(,R@7)'          BC
+msf1a    dc    c'@0 @1  @2 @3         @4 @5,@8(@6,@7)'
+msi1a    dc    c'@0 @1  @2 @3         @4 @6(R@5),X''@7'''      MVI
+mss2a    dc    c'@0 @1  @2 @3 @4    @5 @7(@A,R@6),@9(@B,R@8)'  PACK
+mss3a    dc    c'@0 @1  @2 @3 @4    @5 @7(@A,R@6),@9(R@8)'     MVC
+msssa    dc    c'@0 @1  @2 @3         @4 R@5,@6(R@5)'          STCK
+
+*      *--------------------------------------------------------------*
+*      * Locate 2 byte opcode using stinky binary chop                *
+*      *--------------------------------------------------------------*
+twobyte  ds    0h
+         l     r5,opcsec           * Address secondary table
+         l     r6,0(,r5)           * Get count
+         la    r5,4(,r5)           * Skip count to 1st entry
+
+twob010  ds    0h
+         srl   r6,1                * Divide count by 2 (that would
+*                                  * the chop bit then !)
+         lr    r2,r6               * Copy count
+         mh    r2,=y(opcelen)      * Calculate index
+         la    r10,0(r2,r5)        * Get middle entry
+         clc   opcop,0(r9)         * Compare with opcode found
+         ber   r14                 * Found it, return
+         bh    twob020             * High, start again in bottom half
+
+         la    r5,opcelen(,r10)    * Low, start again ...
+*                                  * ... in top half
+
+twob020  ds    0h
+         ltr   r6,r6               * Any left ?
+         bp    twob010             * Yes, keep on goin'
+
+         l     r10,=v(czlopc)      * Not found, default to invalid
+         br    r14                 * And return
+
+*      *--------------------------------------------------------------*
+*      * Alt. routines are used to substitute alternative message     *
+*      * addressed in those cases where, say, an index register is    *
+*      * zero, viz. LA   R1,4(R4,R5) and LA   R1,4(,R5).              *
+*      *--------------------------------------------------------------*
+*      * Alt. routine for RS with base register = 0                   *
+*      *--------------------------------------------------------------*
+rs2b     ds    0h
+         ltr   r2,r2               * Is base = 0 ?
+         bnzr  r14                 * Nope, return immediately
+         mvc   wkmsg,=a(mrs2b)     * Get alt. message
+         mvc   wkmsl,=y(l'mrs2b)   * Get alt. message length
+         br    r14
+
+*      *--------------------------------------------------------------*
+*      * Alt. routine for RX with index register = 0                  *
+*      *--------------------------------------------------------------*
+rx1b     ds    0h
+         ltr   r3,r3               * Is index = 0 ?
+         bnzr  r14                 * Nope, return immediately
+         mvc   wkmsg,=a(mrx1b)     * Get alt. message
+         mvc   wkmsl,=y(l'mrx1b)   * Get alt. message length
+         br    r14
+
+*      *--------------------------------------------------------------*
+*      * Alt. routine for RX with mask = 0                            *
+*      *--------------------------------------------------------------*
+rx2b     ds    0h
+         ltr   r3,r3               * Is mask = 0 ?
+         bnzr  r14                 * Nope, return immediately
+         mvc   wkmsg,=a(mrx2b)     * Get alt. message
+         mvc   wkmsl,=y(l'mrx2b)   * Get alt. message length
+         br    r14
+
+         cnop  0,4                 * Align
+         ltorg ,                   * Literals
+         cnop  0,4                 * Align
+         drop  r12                 * Drop routine base
+
+         title 'Format Invalid opcode/storage'
+*      *--------------------------------------------------------------*
+*      * Format something which is not a machine instruction          *
+*      *--------------------------------------------------------------*
+mfmi     sub   ,
+
+         zmsgr ((r9),a),                                               +
+               (wkoff+1,x,3),                                          +
+               (0(,r9),x,2),                                           +
+               (0(,r9),c,2),                                           +
+               outa=wkreta,                                            +
+               outl=wkretl,                                            +
+               skel=wkmsg,                                             +
+               sklen=wkmsl,                                            +
+               supress=no,                                             +
+               mf=(e,wkmsgp)
+
+         la    r1,2(,r9)           * Increment instruction pointer
+
+mfmi090  ds    0h
+         subr  (r0,r1)
+
+         title 'Format 2 byte Opcode format E'
+*      *--------------------------------------------------------------*
+*      * Format 2 byte opcode                                         *
+*      *--------------------------------------------------------------*
+mfme     sub   ,
+
+         zmsgr ((r9),a),                                               +
+               (wkoff+1,x,3),                                          +
+               (0(,r9),x,2),                                           +
+               (opcmnem,c,6),                                          +
+               outa=wkreta,                                            +
+               outl=wkretl,                                            +
+               skel=wkmsg,                                             +
+               sklen=wkmsl,                                            +
+               supress=no,                                             +
+               mf=(e,wkmsgp)
+
+         la    r1,2(,r9)           * Increment instruction pointer
+
+mfme090  ds    0h
+         subr  (r0,r1)
+
+         title 'Format 2 byte Opcode'
+*      *--------------------------------------------------------------*
+*      * Format 2 byte opcode                                         *
+*      *--------------------------------------------------------------*
+mfm2     sub   ,
+
+         zmsgr ((r9),a),                                               +
+               (wkoff+1,x,3),                                          +
+               (0(,r9),x,2),                                           +
+               (opcmnem,c,6),                                          +
+               (r2),                                                   +
+               (r3),                                                   +
+               outa=wkreta,                                            +
+               outl=wkretl,                                            +
+               skel=wkmsg,                                             +
+               sklen=wkmsl,                                            +
+               supress=no,                                             +
+               mf=(e,wkmsgp)
+
+         la    r1,2(,r9)           * Increment instruction pointer
+
+mfm2090  ds    0h
+         subr  (r0,r1)
+
+         title 'Format 4 byte Opcode'
+*      *--------------------------------------------------------------*
+*      * Format 4 byte opcode                                         *
+*      *--------------------------------------------------------------*
+mfm4     sub   ,
+
+         zmsgr ((r9),a),                                               +
+               (wkoff+1,x,3),                                          +
+               (0(,r9),x,2),                                           +
+               (2(,r9),x,2),                                           +
+               (opcmnem,c,6),                                          +
+               (r2),                                                   +
+               (r3),                                                   +
+               (r4),                                                   +
+               (r5),                                                   +
+               outa=wkreta,                                            +
+               outl=wkretl,                                            +
+               skel=wkmsg,                                             +
+               sklen=wkmsl,                                            +
+               supress=no,                                             +
+               mf=(e,wkmsgp)
+
+         la    r1,4(,r9)           * Increment instruction pointer
+
+mfm4090  ds    0h
+         subr  (r0,r1)
+
+         title 'Format 4 byte Opcode SI'
+*      *--------------------------------------------------------------*
+*      * Format 4 byte opcode SI                                      *
+*      *--------------------------------------------------------------*
+mfmm     sub   ,
+
+         stc   r4,wkimm            * Store immediate value
+         zmsgr ((r9),a),                                               +
+               (wkoff+1,x,3),                                          +
+               (0(,r9),x,2),                                           +
+               (2(,r9),x,2),                                           +
+               (opcmnem,c,6),                                          +
+               (r2),                                                   +
+               (r3),                                                   +
+               (wkimm,x,1),                                            +
+               outa=wkreta,                                            +
+               outl=wkretl,                                            +
+               skel=wkmsg,                                             +
+               sklen=wkmsl,                                            +
+               supress=no,                                             +
+               mf=(e,wkmsgp)
+
+         la    r1,4(,r9)           * Increment instruction pointer
+
+mfmm090  ds    0h
+         subr  (r0,r1)
+
+         title 'Format 6 byte Opcode'
+*      *--------------------------------------------------------------*
+*      * Format 6 byte opcode                                         *
+*      *--------------------------------------------------------------*
+mfm6     sub   ,
+
+         zmsgr ((r9),a),                                               +
+               (wkoff+1,x,3),                                          +
+               (0(,r9),x,2),                                           +
+               (2(,r9),x,2),                                           +
+               (4(,r9),x,2),                                           +
+               (opcmnem,c,6),                                          +
+               (r2),                                                   +
+               (r3),                                                   +
+               (r4),                                                   +
+               (r5),                                                   +
+               (r6),                                                   +
+               (r7),                                                   +
+               outa=wkreta,                                            +
+               outl=wkretl,                                            +
+               skel=wkmsg,                                             +
+               sklen=wkmsl,                                            +
+               supress=no,                                             +
+               mf=(e,wkmsgp)
+
+         la    r1,6(,r9)
+
+mfm6090  ds    0h
+         subr  (r0,r1)
+
+*      *--------------------------------------------------------------*
+*      * Tiny routines to extract operands                            *
+*      *--------------------------------------------------------------*
+*      *       +------+------+--+----------+                          *
+*      *  RX   |Opcode|R1|R2 |B1|   D1     |                          *
+*      *       +------+------+--+----------+                          *
+*      *       0      1      2      3                                 *
+*      *--------------------------------------------------------------*
+rx1      ds    0h
+         lm    r2,r7,wknul         * Clear r2-r7
+         ic    r2,1(,r1)           * Get R1|Rx
+         icm   r4,3,2(r1)          * Get Rb|Disp
+         srdl  r2,4                * Isolate R1
+         srl   r3,28               * Isolate Rx
+         srdl  r4,12               * Isolate Rb
+         srl   r5,20               * Isolate Disp
+         br    r14
+
+*      *--------------------------------------------------------------*
+*      *       +------+------+--+----------+                          *
+*      *  SI   |Opcode| VAL  |B1|   D1     |                          *
+*      *       +------+------+--+----------+                          *
+*      *       0      1      2      3                                 *
+*      *--------------------------------------------------------------*
+si1      ds    0h
+         lm    r2,r7,wknul         * Clear r2-r7
+         ic    r4,1(,r1)           * Get Val
+         icm   r2,3,2(r1)          * Get Rb|Disp
+         srdl  r2,12               * Isolate Rb
+         srl   r3,20               * Isolate Disp
+         br    r14
+
+*      *--------------------------------------------------------------*
+*      *       +------+--+---+---+----------+---+-------+             *
+*      *  SS2  |Opcode|L1|L2 |B1 |   D1     |B2 |  D2   |             *
+*      *       +------+--+---+---+----------+---+-------+             *
+*      *       0      1      2       3      4       5                 *
+*      *--------------------------------------------------------------*
+ss2      ds    0h
+         lm    r2,r7,wknul         * Clear r2-r7
+         ic    r6,1(,r1)           * Get L1|L2
+         srdl  r6,4                * Isolate L1
+         la    r6,1(,r6)           * Convert from machine length
+         srl   r7,28               * Isolate L2
+         la    r7,1(,r7)           * Convert from machine length
+         icm   r2,3,2(r1)          * Get Rb1|Disp1
+         icm   r4,3,4(r1)          * Get Rb2|Disp2
+         srdl  r2,12               * Isolate Rb1
+         srl   r3,20               * Isolate Disp1
+         srdl  r4,12               * Isolate Rb2
+         srl   r5,20               * Isolate Disp2
+         br    r14
+
+*      *--------------------------------------------------------------*
+*      *       +------+------+---+----------+---+-------+             *
+*      *  SS3  |Opcode|  L   |B1 |   D1     |B2 |  D2   |             *
+*      *       +------+------+---+----------+---+-------+             *
+*      *       0      1      2       3      4       5                 *
+*      *--------------------------------------------------------------*
+ss3      ds    0h
+         lm    r2,r7,wknul         * Clear r2-r7
+         ic    r6,1(,r1)           * Get L
+         la    r6,1(,r6)           * Convert from machine length
+         icm   r2,3,2(r1)          * Get Rb1|Disp1
+         icm   r4,3,4(r1)          * Get Rb2|Disp2
+         srdl  r2,12               * Isolate Rb1
+         srl   r3,20               * Isolate Disp1
+         srdl  r4,12               * Isolate Rb2
+         srl   r5,20               * Isolate Disp2
+         br    r14
+
+*      *--------------------------------------------------------------*
+*      *       +------+------+                                        *
+*      *  RR   |Opcode|R1|R2 |                                        *
+*      *       +------+------+                                        *
+*      *       0      1      2                                        *
+*      *--------------------------------------------------------------*
+rr1      ds    0h
+         lm    r2,r7,wknul         * Clear r2-r7
+         ic    r2,1(,r1)           * Get R1|R2
+         srdl  r2,4                * Isolate R1
+         srl   r3,28               * Isolate R2
+         br    r14
+
+*      *--------------------------------------------------------------*
+*      *       +------+------+                                        *
+*      *  RR3  |Opcode|  nnn |                                        *
+*      *       +------+------+                                        *
+*      *       0      1      2                                        *
+*      *--------------------------------------------------------------*
+rr3      ds    0h
+         lm    r2,r7,wknul         * Clear r2-r7
+         l     r2,wknul            * Clear r2
+         ic    r2,1(,r1)           * Get nnn
+         br    r14
+
+*      *--------------------------------------------------------------*
+*      *       +-------------+--+----------+                          *
+*      *  S    |Opcode       |B1|   D1     |                          *
+*      *       +-------------+--+----------+                          *
+*      *       0      1      2      3                                 *
+*      *--------------------------------------------------------------*
+sss      ds    0h
+         lm    r2,r7,wknul         * Clear r2-r7
+         icm   r2,3,2(r1)          * Get Rb|Disp
+         srdl  r2,12               * Isolate Rb
+         srl   r3,20               * Isolate Disp
+         br    r14
+
+*      *--------------------------------------------------------------*
+*      *       +-------------+----+-----+                             *
+*      *  RRE  |Opcode       |    |r1|r2|                             *
+*      *       +-------------+----+-----+                             *
+*      *       0      1      2    3     4                             *
+*      *--------------------------------------------------------------*
+rre      ds    0h
+         lm    r2,r7,wknul         * Clear r2-r7
+         l     r2,wknul            * Clear r2
+         ic    r2,3(,r1)           * Get R1/R2
+         srdl  r2,4                * Isolate R1
+         srl   r3,28               * Isolate R2
+         br    r14
+
+*      *--------------------------------------------------------------*
+*      *       +------+------+                                        *
+*      *  inv  |             |                                        *
+*      *       +------+------+                                        *
+*      *       0      1      2                                        *
+*      *--------------------------------------------------------------*
+inv      ds    0h
+         lm    r2,r7,wknul         * Clear r2-r7
+         br    r14
+
+*      *--------------------------------------------------------------*
+*      * Dsects (assorted)                                            *
+*      *--------------------------------------------------------------*
+dprc     dsect ,
+dpdis    ds    a                   * Routine to format opcode
+dpmsg    ds    a                   * Message address
+dpmsl    ds    a                   * Message length
+dpmfm    ds    a                   * Routine to format message
+dpchk    ds    a                   * Routine to select alt. message
+dprcl    equ   *-dprc              * Entry length
+
+         opcd  dsect               * Map Opcode table
+         dsmr  dsect               * Map request parameter list
+         regequ ,                  * Register equates
+         end   ,                   * C'est la!
