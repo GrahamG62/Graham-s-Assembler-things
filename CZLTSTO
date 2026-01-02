@@ -1,0 +1,178 @@
+CZLTST   title 'Bootstrap'
+*      *--------------------------------------------------------------*
+*      * Test bootstrap                                               *
+*      *                                                              *
+*      * (c) Caddis Systems Ltd 2001, All rights reserved             *
+*      * v1.000                                                       *
+*      *--------------------------------------------------------------*
+czltst   csect ,
+czltst   amode 31                  * Use ALL the storage available
+czltst   rmode 24                  * Got DCBs, languish in the depths!
+
+         stkr  get,id=ZTST,base=r11
+{{
+myprt    ds    c                   * ASA for print line
+myrmsg   ds    xl256               * Area for returned message
+myrlen   ds    f                   * Length of returned message
+ldaddr   ds    f                   * Address of loaded program
+ldlen    ds    f                   * Length of loaded program
+dsmpl    dsmr  plist
+msgpl    zmsgr type=plist
+loadpl   ds    xl(loadln)          * Area to build load plist
+}}
+
+         lae   r12,0(r15,0)        * Transfer base address
+         using czltst,r12          * Make code addressable
+         b     main000             * Skip eye-catchers, etc.
+         cnop  0,4
+         eyec  ,                   * Eye-catchers
+         cnop  0,4
+
+*      *--------------------------------------------------------------*
+*      * Processing ...                                               *
+*      *--------------------------------------------------------------*
+main000  ds    0h
+
+         open  (tsfile,(OUTPUT)),                                      +
+               mode=31
+
+*      *--------------------------------------------------------------*
+*      * Fire off message                                             *
+*      *--------------------------------------------------------------*
+         zmsgr (x'47'(,r12),c,4),                                      +
+               num=1,                                                  +
+               mod=TST,                                                +
+               out=yes,                                                +
+               mf=(e,msgpl)
+
+*        b     parse
+
+         zmsgr (=c'Hello',c,5),                                        +
+               (=c'There',c,5),                                        +
+               num=4,                                                  +
+               mod=TST,                                                +
+               out=yes,                                                +
+               mf=(e,msgpl)
+
+         zmsgr (=c'mince',c,5),                                        +
+               (=c'bag  ',c,5),                                        +
+               (=c'bag  ',c,5),                                        +
+               (=cl12'freehand',c,12),                                 +
+               (=c'loofa',c,5),                                        +
+               (=c'bag  ',c,5),                                        +
+               num=100,                                                +
+               mod=TST,                                                +
+               out=yes,                                                +
+               mf=(e,msgpl)
+
+         zmsgr (=c'mince',c,5),                                        +
+               (=c'bag  ',c,5),                                        +
+               (=c'bag  ',c,5),                                        +
+               (=cl12'freehand',c,12),                                 +
+               (=c'loofa',c,5),                                        +
+               (=c'bag  ',c,5),                                        +
+               num=22,                                                 +
+               mod=TST,                                                +
+               out=yes,                                                +
+               mf=(e,msgpl)
+
+*      *--------------------------------------------------------------*
+*      * Load up program to disassemble & dump                        *
+*      *--------------------------------------------------------------*
+         la    r0,loadpl
+         l     r1,=a(loadln)
+         la    r14,loadlst
+         lr    r15,r1
+
+         load  ep=KEYTZ,sf=(E,loadpl)
+
+         n     r0,=x'7fffffff'     * Lose Amode bit
+         n     r1,=x'00ffffff'     * Lose APF info
+         stm   r0,r1,ldaddr        * Save address and length (dwds)
+
+*      *--------------------------------------------------------------*
+*      * Set up dump                                                  *
+*      *--------------------------------------------------------------*
+         lr    r6,r0               * Get address
+         lr    r4,r6               * Take a copy
+         l     r3,ldlen            * Copy length
+
+         bctr  r3,0
+         srl   r3,1                * Convert to 16 byte chunks
+
+dumpo    ds    0h
+         lr    r5,r4
+         slr   r5,r6
+         st    r5,myrlen
+
+         zmsgr ((r4),a),                                               +
+               (myrlen+1,x,3),                                         +
+               (00(,r4),x,4),                                          +
+               (04(,r4),x,4),                                          +
+               (08(,r4),x,4),                                          +
+               (12(,r4),x,4),                                          +
+               (00(,r4),c,16),                                         +
+               skel=(s,msg4),                                          +
+               sklen==y(l'msg4),                                       +
+               supress=no,                                             +
+               outa=(s,myrmsg),                                        +
+               outl==a(l'myrmsg),                                      +
+               mf=(e,msgpl)
+
+         put   tsfile,myprt        * Write print line
+
+         la    r4,16(,r4)
+         bct   r3,dumpo
+
+*      *--------------------------------------------------------------*
+*      * Call disassembler                                            *
+*      *--------------------------------------------------------------*
+         l     r4,ldaddr           * Get address of loaded program
+         l     r5,ldlen            * Get length (in dwords)
+         sll   r5,3                * Convert to bytes (*8)
+         ar    r5,r4               * Calculate ...
+         s     r5,=a(7)            * ... end address
+
+disasm   ds    0h
+         cr    r4,r5               * Reached end of program ?
+         bnl   disend              * Yes, all done !
+
+         dsmr  base=ldaddr,loc=(r4),retn=(s,myrmsg),retl==a(l'myrmsg), +
+               mf=(e,dsmpl)
+
+         lr    r4,r1               * Copy new address
+         put   tsfile,myprt        * Write print line
+         b     disasm              * And loop
+
+disend   ds    0h
+
+         close (tsfile,),                                              +
+               mode=31
+
+         la    r15,0(,0)           * Set Rc=0
+
+main090  ds    0h
+         stkr  free,keep=r15            * And return to caller
+         br    r14
+
+         cnop  0,4                 * Align
+msg4     dc    c'@0  @1 @2 @3 @4 @5  *@6*'
+msg6     dc    c'(c) Caddis Systems Ltd.'
+loadlst  load  ep=mince,sf=L
+loadln   equ   *-loadlst
+tsfile   dcb   ddname=TSTPRINT,                                        +
+               macrf=(PM),                                             +
+               dcbe=tsfdcbe,                                           +
+               dsorg=PS,                                               +
+               recfm=FBA,                                              +
+               lrecl=132
+
+tsfdcbe  dcbe  rmode31=BUFF
+
+         ltorg ,                   * Literals
+         cnop  0,4                 * Align
+etst     equ   *
+         drop  r12                 * Drop routine base
+
+         regequ ,                  * Register equates
+         end   ,                   * C'est la!
