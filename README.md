@@ -32,7 +32,7 @@ You would call that by:
                out=yes,                                                +
                mf=(e,msgpl)
 
-The msgpl parameter list is build using ZMSGR TYPE=PLIST (lower-case works too - I like to not have the shift key under a finger when I'm writing assembler, so bear in mind that constant values *are* case sensitive when interrogated in macro code).
+The msgpl parameter list is built using ZMSGR TYPE=PLIST (lower-case works too - I like to not have the shift key under a finger when I'm writing assembler, so bear in mind that constant values *are* case sensitive when interrogated in macro code).
 
 That's the complicated (!) stuff, the other macros should be easy enough to recognise. I like the HLASM technique where you define a bit setting as: 
 
