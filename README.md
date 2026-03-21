@@ -15,6 +15,6 @@ CZLTSTO is the original test bootstrap - it calls the disassembler and prints ou
 
 The message formatter CZLMSG uses the ZMSGR and sometimes the ZMSG macros to either issue, or define messages. Messages can be in an assembler routine (as in CZLDIS) or in a message table using ZMSG.
 
-That's the complicated (!) stuff, the other macros should be easy enouh to recognise.
+That's the complicated (!) stuff, the other macros should be easy enough to recognise.
 
 ASMCZL assemblers & links things and can be adaoted as required. 
