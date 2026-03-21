@@ -13,7 +13,20 @@ In order to test this, I added a couple of routines that used this mechanism - C
 
 CZLTSTO is the original test bootstrap - it calls the disassembler and prints out the disassembled code (current when I wrote it for OS/390) to SYSOUT or whatever. CZLDIS (the disassembler) is pretty compact and uses the OPCD macro in CZLOPC to define an instruction with its format and type. KEYTZ is an example of how the CZLPAR routine is called and works. The KEYW and KEYOP macros define a keyword table - the example here is CZLKEY.
 
-The message formatter CZLMSG uses the ZMSGR and sometimes the ZMSG macros to either issue, or define messages. Messages can be in an assembler routine (as in CZLDIS) or in a message table using ZMSG.
+The message formatter CZLMSG uses the ZMSGR and sometimes the ZMSG macros to either issue, or define messages. Messages can be in an assembler routine (as in CZLDIS) or in a message table using ZMSG. By default, it calls a routine to direct the message text to another routine that can be used for national language support, in this case one in UK English. As it stands, messages can either be directed to the system console, or returned to the calling program. A quick example would be:
+
+czlmuk   rsect ,
+czlmuk   amode 31
+czlmuk   rmode any
+zmsg 001,I,'CZL - Hello World!'
+zmsg type=end
+ 
+You would call that by: 
+
+         zmsgr mod=TST,                                                +
+               num=1,                                                  +
+               out=yes,                                                +
+               mf=(e,msgpl)
 
 That's the complicated (!) stuff, the other macros should be easy enough to recognise.
 
