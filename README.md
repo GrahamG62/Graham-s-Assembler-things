@@ -34,6 +34,23 @@ You would call that by:
 
 The msgpl parameter list is build using ZMSGR TYPE=PLIST (lower-case works too - I like to not have the shift key under a finger when I'm writing assembler, so bear in mind that constant values *are* case sensitive when interrogated in macro code).
 
-That's the complicated (!) stuff, the other macros should be easy enough to recognise.
+That's the complicated (!) stuff, the other macros should be easy enough to recognise. I like the HLASM technique where you define a bit setting as: 
+
+msflg1   ds    xl1      04+30      * Flag byte #1
+msf1ret  equ   msflg1,x'80'        *   Format & return message
+msf1con  equ   msflg1,x'40'        *   Issue message on console
+msf1sup  equ   msflg1,x'20'        *   Suppress blanks/x'00's
+msf1lbr  equ   msflg1,x'10'        *   Use Linkage=BRANCH on WTO
+
+So you can define a bit setting as a length attribute on the flag you are interested. The CZL* code uses this throughout, with the SET, TEST, etc. macros because you just need to refer to the flag without worrying which byte you are referring to. 
+
+For example: 
+	*      *--------------------------------------------------------------*
+	*      * Return the message to caller's area if requested             *
+	*      *--------------------------------------------------------------*
+			 test  msf1ret             * Return message ?
+			 bno   main010             * No, skip
+			 zcall =a(retmsg)          * Return message
+
 
 ASMCZL assembles & links things and can be adapted as required. 
