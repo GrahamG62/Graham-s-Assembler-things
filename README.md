@@ -16,9 +16,13 @@ CZLTSTO is the original test bootstrap - it calls the disassembler and prints ou
 The message formatter CZLMSG uses the ZMSGR and sometimes the ZMSG macros to either issue, or define messages. Messages can be in an assembler routine (as in CZLDIS) or in a message table using ZMSG. By default, it calls a routine to direct the message text to another routine that can be used for national language support, in this case one in UK English. As it stands, messages can either be directed to the system console, or returned to the calling program. A quick example would be:
 
 czlmuk   rsect ,
+
 czlmuk   amode 31
+
 czlmuk   rmode any
+
 zmsg 001,I,'CZL - Hello World!'
+
 zmsg type=end
  
 You would call that by: 
