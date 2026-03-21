@@ -17,4 +17,4 @@ The message formatter CZLMSG uses the ZMSGR and sometimes the ZMSG macros to eit
 
 That's the complicated (!) stuff, the other macros should be easy enough to recognise.
 
-ASMCZL assemblers & links things and can be adaoted as required. 
+ASMCZL assembles & links things and can be adapted as required. 
