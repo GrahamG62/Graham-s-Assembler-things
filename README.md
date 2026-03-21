@@ -11,3 +11,10 @@ Additionally, it can reserve an area to be used as an anchor block and persist t
 
 In order to test this, I added a couple of routines that used this mechanism - CZLPAR, CZLMSG & CZLDIS. They all use the STKR/CZLSTK things to create & maintain re-entrancy via the stack with helper macros SUB & SUBR for easier subroutines. CZLENT is an example of how to initialise the environment and call other modules. There's a collection of helper macros starting with MAC* which do things like generate parameter lists and set register values before returning to a calling program, or pick up a register value from a savearea.
 
+CZLTSTO is the original test bootstrap - it calls the disassembler and prints out the disassembled code (current when I wrote it for OS/390) to SYSOUT or whatever. CZLDIS (the disassembler) is pretty compact and used the OPCD macro in CZLOPC to define an instruction with its format and type. KEYTZ is an example of how the CZLPAR routine is called and works. The KEYW and KEYOP macros define a keyword table - the example here is CZLKEY.
+
+The message formatter CZLMSG uses the ZMSGR and sometimes the ZMSG macros to either issue, or define messages. Messages can be in an assembler routine (as in CZLDIS) or in a message table using ZMSG.
+
+That's the complicated (!) stuff, the other macros should be easy enouh to recognise.
+
+ASMCZL assemblers & links things and can be adaoted as required. 
